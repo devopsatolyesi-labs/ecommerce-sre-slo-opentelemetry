@@ -1,0 +1,92 @@
+# ==============================================================================
+# SRE Service Level Objectives (SLO) & Multi-Window Burn-Rate Alerting Rules
+# Compliant with Google SRE Handbook & Prometheus Operator (PrometheusRule)
+# ==============================================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ecommerce-sre-slo-rules
+  namespace: monitoring
+  labels:
+    role: alert-rules
+    app.kubernetes.io/name: astronomy-shop-sre
+spec:
+  groups:
+    - name: ecommerce-availability-slo
+      rules:
+        # 1. Total Requests Rate over 5m, 30m, 1h, 6h, 3d, 30d
+        - record: job:http_requests:rate5m
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend"}[5m]))
+
+        - record: job:http_requests:rate1h
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend"}[1h]))
+
+        - record: job:http_requests:rate6h
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend"}[6h]))
+
+        - record: job:http_requests:rate30d
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend"}[30d]))
+
+        # 2. Error Rate (HTTP 5xx)
+        - record: job:http_requests_errors:rate5m
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend",status=~"5.."}[5m]))
+
+        - record: job:http_requests_errors:rate1h
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend",status=~"5.."}[1h]))
+
+        - record: job:http_requests_errors:rate6h
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend",status=~"5.."}[6h]))
+
+        - record: job:http_requests_errors:rate30d
+          expr: sum(rate(http_requests_total{job="astronomy-shop-frontend",status=~"5.."}[30d]))
+
+        # 3. Service Level Indicator (SLI) - Actual Availability %
+        - record: job:http_availability:sli30d
+          expr: 1 - (job:http_requests_errors:rate30d / job:http_requests:rate30d)
+
+        # 4. Remaining Error Budget (%) [Target: 99.9% Availability -> 0.001 Error Budget]
+        - record: job:http_availability:error_budget_remaining
+          expr: (1 - (job:http_requests_errors:rate30d / job:http_requests:rate30d) - 0.999) / (1 - 0.999) * 100
+
+        # ======================================================================
+        # SRE Multiwindow, Multi-Burn-Rate Alerts
+        # ======================================================================
+        # Critical Alert: 1h burn rate > 14.4x AND 5m burn rate > 14.4x (Consumes 2% budget in 1 hour)
+        - alert: ErrorBudgetBurnRateCritical
+          expr: (job:http_requests_errors:rate1h / job:http_requests:rate1h > 14.4 * 0.001)
+            and (job:http_requests_errors:rate5m / job:http_requests:rate5m > 14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            tier: sre-slo
+          annotations:
+            summary: "Critical Error Budget Burn Rate (14.4x) on E-Commerce Frontend"
+            description: "High error rate is actively depleting the monthly error budget (2% budget consumed in 1 hour). Immediate SRE intervention required."
+
+        # Warning Alert: 6h burn rate > 6x AND 30m burn rate > 6x (Consumes 5% budget in 6 hours)
+        - alert: ErrorBudgetBurnRateWarning
+          expr: (job:http_requests_errors:rate6h / job:http_requests:rate6h > 6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+            tier: sre-slo
+          annotations:
+            summary: "Elevated Error Budget Burn Rate (6x) on E-Commerce Frontend"
+            description: "Error budget is draining faster than sustainable threshold (5% budget consumed in 6 hours)."
+
+    - name: ecommerce-latency-slo
+      rules:
+        # p95 Latency SLI (Target: p95 < 500ms)
+        - record: job:checkout_latency_p95:seconds5m
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="checkoutservice"}[5m])) by (le))
+
+        - alert: CheckoutLatencySloBreach
+          expr: job:checkout_latency_p95:seconds5m > 0.500
+          for: 5m
+          labels:
+            severity: warning
+            tier: sre-slo
+          annotations:
+            summary: "Checkout Service p95 Latency SLO Breached (> 500ms)"
+            description: "The 95th percentile latency for checkout operations is {{ $value }}s, exceeding the 500ms SLO target."
