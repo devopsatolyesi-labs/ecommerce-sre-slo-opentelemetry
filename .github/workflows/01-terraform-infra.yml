@@ -162,4 +162,5 @@ jobs:
           
           terraform destroy \
             -auto-approve \
-            -var-file="environments/${{ inputs.environment }}.tfvars"
+            -var-file="environments/${{ inputs.environment }}.tfvars" \
+            -var="enable_acm_ssl=${{ inputs.enable_acm_ssl }}"
