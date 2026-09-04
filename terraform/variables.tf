@@ -77,7 +77,7 @@ variable "enable_acm_ssl" {
 variable "enable_cloudflare" {
   description = "Flag to enable automated Cloudflare DNS records and SSL proxy"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "cloudflare_api_token" {

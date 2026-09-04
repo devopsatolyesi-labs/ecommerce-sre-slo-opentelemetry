@@ -162,22 +162,34 @@ jobs:
           AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
 
           echo "Deploying Unified SRE Gateway (Single ALB Routing)..."
-          if [ "$ENABLE_SSL" != "false" ]; then
-            echo "SSL Mode: ENABLED (Port 443 with ACM Termination & HTTPS 301 Redirect)"
-            ACM_ARN="$CUSTOM_ACM_ARN"
-            if [ -z "$ACM_ARN" ]; then
-              ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
-            fi
+          ACM_ARN="$CUSTOM_ACM_ARN"
+          ACM_STATUS=""
+          if [ -z "$ACM_ARN" ]; then
+            ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
+          fi
 
-            if [ -n "$ACM_ARN" ] && [ "$ACM_ARN" != "None" ]; then
-              echo "Using AWS ACM Certificate ARN: ${ACM_ARN}"
-              sed -i.bak "s|arn:aws:acm:[^\"]*|${ACM_ARN}|g" observability/05-unified-ingress.yaml || true
-            else
-              echo "Notice: No ACM Certificate ARN found, proceeding with default configured manifest."
+          if [ -n "$ACM_ARN" ] && [ "$ACM_ARN" != "None" ]; then
+            ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" --query 'Certificate.Status' --output text 2>/dev/null || echo "")
+            echo "Discovered AWS ACM Certificate: ${ACM_ARN} (Status: ${ACM_STATUS})"
+
+            if [ "$ACM_STATUS" = "PENDING_VALIDATION" ]; then
+              echo "Waiting for ACM Certificate DNS validation to become ISSUED..."
+              aws acm wait certificate-validated --certificate-arn "$ACM_ARN" --region "$AWS_REGION" 2>/dev/null || true
+              ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" --query 'Certificate.Status' --output text 2>/dev/null || echo "")
+              echo "Updated ACM Status: ${ACM_STATUS}"
             fi
+          fi
+
+          if [ "$ENABLE_SSL" != "false" ] && [ "$ACM_STATUS" = "ISSUED" ]; then
+            echo "SSL Mode: ENABLED (Port 443 with Validated ACM Certificate & HTTPS 301 Redirect)"
+            sed -i.bak "s|arn:aws:acm:[^\"]*|${ACM_ARN}|g" observability/05-unified-ingress.yaml || true
             kubectl apply -f observability/05-unified-ingress.yaml
           else
-            echo "SSL Mode: DISABLED (Port 80 Plain HTTP Mode)"
+            if [ "$ENABLE_SSL" != "false" ]; then
+              echo "Notice: ACM Certificate is not in ISSUED state (status: ${ACM_STATUS}). Deploying standard HTTP mode to ensure LoadBalancer provisions immediately."
+            else
+              echo "SSL Mode: DISABLED (Port 80 Plain HTTP Mode)"
+            fi
             # Strip ACM SSL annotations and HTTPS redirects for pure HTTP mode
             grep -v 'aws-load-balancer-ssl' observability/05-unified-ingress.yaml | sed '/if ($http_x_forwarded_proto = "http")/,+2d' | kubectl apply -f -
           fi
@@ -191,17 +203,24 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
-          echo "4/4 Fetching Single Unified AWS Load Balancer Hostname (Port 80)..."
-          for i in {1..30}; do
+          echo "4/4 Fetching Single Unified AWS Load Balancer Hostname..."
+          GATEWAY_URL=""
+          for i in {1..40}; do
             GATEWAY_URL=$(kubectl get svc -n gateway unified-gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
             if [ -n "$GATEWAY_URL" ]; then
+              echo "Found AWS Gateway ELB Hostname: ${GATEWAY_URL}"
               break
             fi
-            echo "Waiting for Gateway ALB to provision DNS hostname... ($i/30)"
+            echo "Waiting for Gateway ALB to provision DNS hostname... ($i/40)"
             sleep 5
           done
 
-          echo "AWS Single Gateway ALB Hostname: ${GATEWAY_URL}"
+          if [ -z "$GATEWAY_URL" ]; then
+            echo "Error: Unified Gateway Load Balancer did not get a hostname in time."
+            kubectl describe svc -n gateway unified-gateway
+            exit 1
+          fi
+
 
           # Check Cloudflare Integration
           if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then

@@ -72,6 +72,9 @@ jobs:
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
       TF_VAR_domain_name: ${{ vars.DOMAIN_NAME || 'devopsatolyesi.com' }}
+      TF_VAR_enable_cloudflare: true
+      TF_VAR_enable_acm_ssl: ${{ inputs.enable_acm_ssl || true }}
+
     defaults:
       run:
         working-directory: terraform

@@ -12,3 +12,6 @@ max_nodes           = 3
 min_nodes           = 1
 capacity_type       = "ON_DEMAND"
 enable_ecs          = false
+enable_cloudflare   = true
+domain_name         = "devopsatolyesi.com"
+
