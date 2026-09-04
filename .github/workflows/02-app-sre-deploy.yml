@@ -306,11 +306,31 @@ jobs:
           chmod +x scripts/validate.sh
           ./scripts/validate.sh || true
 
-      - name: Undeploy Applications
+      - name: Undeploy Applications (Clean Teardown)
         if: inputs.action == 'undeploy'
         run: |
-          echo "Undeploying Astronomy Shop and Observability workloads..."
+          echo "1/3 Uninstalling Astronomy Shop microservices (Helm)..."
           helm uninstall astronomy-shop --namespace astronomy-shop 2>/dev/null || true
-          kubectl delete -f observability/ 2>/dev/null || true
+          kubectl delete namespace astronomy-shop --timeout=60s 2>/dev/null || true
+
+          echo "2/3 Deleting Unified Gateway Load Balancer and releasing AWS ELBs..."
+          kubectl delete -f observability/05-unified-ingress.yaml 2>/dev/null || true
+          kubectl delete namespace gateway --timeout=60s 2>/dev/null || true
+
+          echo "3/3 Removing OpenTelemetry Collector and Prometheus/Tempo stack (preserving external Grafana/Sonar)..."
+          kubectl delete -f observability/04-otel-collector-deployment.yaml 2>/dev/null || true
+          kubectl delete -f observability/otel-collector-config.yaml 2>/dev/null || true
+          kubectl delete -f observability/01-prometheus-statefulset.yaml 2>/dev/null || true
+          kubectl delete -f observability/02-tempo-statefulset.yaml 2>/dev/null || true
           kubectl delete -f sre-slo/ 2>/dev/null || true
-          echo "Workloads successfully removed from cluster."
+
+          # If in-cluster grafana/sonarqube were deployed, delete them on undeploy if requested
+          if [ "${{ inputs.deploy_incluster_grafana }}" == "false" ]; then
+            kubectl delete namespace monitoring --timeout=60s 2>/dev/null || true
+          fi
+          if [ "${{ inputs.deploy_sonarqube }}" == "false" ]; then
+            kubectl delete namespace sonarqube --timeout=60s 2>/dev/null || true
+          fi
+
+          echo "Workloads successfully cleaned up from EKS cluster."
+
