@@ -154,167 +154,150 @@ jobs:
           sleep 5
           kubectl -n astronomy-shop get pods,svc
 
-      - name: Deploy Unified SRE Gateway & Reverse Proxy (Single ALB with Toggleable SSL)
+      - name: "[1/3] Deploy Unified Gateway (HTTP Mode - ALB Provision)"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          ENABLE_SSL="${{ inputs.enable_ssl }}"
-          CUSTOM_ACM_ARN="${{ inputs.acm_certificate_arn }}"
-          AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          echo "Deploying Unified SRE Gateway in HTTP mode first to get ALB hostname..."
+          # Always start in HTTP mode so ALB provisions immediately
+          grep -v 'aws-load-balancer-ssl' observability/05-unified-ingress.yaml \
+            | sed '/if ($http_x_forwarded_proto = .http.)/,+2d' \
+            | kubectl apply -f -
 
-          echo "Deploying Unified SRE Gateway (Single ALB Routing)..."
-          ACM_ARN="$CUSTOM_ACM_ARN"
-          ACM_STATUS=""
-          if [ -z "$ACM_ARN" ]; then
-            ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
-          fi
-
-          if [ -n "$ACM_ARN" ] && [ "$ACM_ARN" != "None" ]; then
-            ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" --query 'Certificate.Status' --output text 2>/dev/null || echo "")
-            echo "Discovered AWS ACM Certificate: ${ACM_ARN} (Status: ${ACM_STATUS})"
-
-            if [ "$ACM_STATUS" = "PENDING_VALIDATION" ]; then
-              echo "Waiting for ACM Certificate DNS validation to become ISSUED..."
-              aws acm wait certificate-validated --certificate-arn "$ACM_ARN" --region "$AWS_REGION" 2>/dev/null || true
-              ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" --query 'Certificate.Status' --output text 2>/dev/null || echo "")
-              echo "Updated ACM Status: ${ACM_STATUS}"
-            fi
-          fi
-
-          if [ "$ENABLE_SSL" != "false" ] && [ "$ACM_STATUS" = "ISSUED" ]; then
-            echo "SSL Mode: ENABLED (Port 443 with Validated ACM Certificate & HTTPS 301 Redirect)"
-            sed -i.bak "s|arn:aws:acm:[^\"]*|${ACM_ARN}|g" observability/05-unified-ingress.yaml || true
-            kubectl apply -f observability/05-unified-ingress.yaml
-          else
-            if [ "$ENABLE_SSL" != "false" ]; then
-              echo "Notice: ACM Certificate is not in ISSUED state (status: ${ACM_STATUS}). Deploying standard HTTP mode to ensure LoadBalancer provisions immediately."
-            else
-              echo "SSL Mode: DISABLED (Port 80 Plain HTTP Mode)"
-            fi
-            # Strip ACM SSL annotations and HTTPS redirects for pure HTTP mode
-            grep -v 'aws-load-balancer-ssl' observability/05-unified-ingress.yaml | sed '/if ($http_x_forwarded_proto = "http")/,+2d' | kubectl apply -f -
-          fi
-
+          kubectl create namespace gateway --dry-run=client -o yaml | kubectl apply -f -
           kubectl rollout status deployment/unified-gateway -n gateway --timeout=180s || true
           kubectl get svc -n gateway
 
-      - name: Query Public Load Balancer & Configure Cloudflare DNS / SSL
-        if: inputs.action == 'deploy' || inputs.action == 'validate'
+      - name: "[2/3] Sync Cloudflare DNS & Wait for ACM Certificate"
+        if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
-          echo "4/4 Fetching Single Unified AWS Load Balancer Hostname..."
+          AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          ENABLE_SSL="${{ inputs.enable_ssl }}"
+          CUSTOM_ACM_ARN="${{ inputs.acm_certificate_arn }}"
+          DOMAIN="devopsatolyesi.com"
+
+          # --- Get ALB hostname (wait for it) ---
+          echo "Fetching ALB hostname..."
           GATEWAY_URL=""
           for i in {1..40}; do
             GATEWAY_URL=$(kubectl get svc -n gateway unified-gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-            if [ -n "$GATEWAY_URL" ]; then
-              echo "Found AWS Gateway ELB Hostname: ${GATEWAY_URL}"
-              break
-            fi
-            echo "Waiting for Gateway ALB to provision DNS hostname... ($i/40)"
+            [ -n "$GATEWAY_URL" ] && break
+            echo "Waiting for ALB hostname... ($i/40)"
             sleep 5
           done
 
           if [ -z "$GATEWAY_URL" ]; then
-            echo "Error: Unified Gateway Load Balancer did not get a hostname in time."
+            echo "Error: ALB did not get a hostname in time."
             kubectl describe svc -n gateway unified-gateway
             exit 1
           fi
+          echo "ALB Hostname: ${GATEWAY_URL}"
 
-
-          # Check Cloudflare Integration
-          if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then
-            echo "Cloudflare credentials detected! Querying Cloudflare Zone..."
-            ZONE_NAME=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}" \
+          # --- Helper: Upsert Cloudflare CNAME ---
+          upsert_cname() {
+            local NAME=$1 TARGET=$2 PROXIED=${3:-true} TTL=1
+            [ "$PROXIED" = "false" ] && TTL=60
+            echo "-> CNAME ${NAME}.${DOMAIN} -> ${TARGET} (proxied=${PROXIED})"
+            local EXISTING
+            EXISTING=$(curl -sf -X GET \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${NAME}.${DOMAIN}&type=CNAME" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: application/json" | jq -r '.result.name // empty')
+              -H "Content-Type: application/json" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-            if [ -n "$ZONE_NAME" ]; then
-              echo "Target Cloudflare Zone: ${ZONE_NAME}"
+            local PAYLOAD="{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}"
+            local RESP
+            if [ -n "$EXISTING" ]; then
+              RESP=$(curl -sf -X PUT \
+                "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING}" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" \
+                --data "$PAYLOAD" 2>/dev/null || echo '{"success":false}')
+              echo "   UPDATE: $(echo $RESP | jq -c '{success:.success,errors:.errors}' 2>/dev/null)"
+            else
+              RESP=$(curl -sf -X POST \
+                "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" \
+                --data "$PAYLOAD" 2>/dev/null || echo '{"success":false}')
+              echo "   CREATE: $(echo $RESP | jq -c '{success:.success,errors:.errors}' 2>/dev/null)"
+            fi
+          }
 
-              # Function to create or update Cloudflare CNAME record
-              upsert_cname() {
-                local NAME=$1
-                local TARGET=$2
-                local PROXIED=${3:-true}
-                local TTL=1
-                if [ "$PROXIED" = "false" ]; then
-                  TTL=60
-                fi
-                echo "Configuring Cloudflare DNS: ${NAME}.${ZONE_NAME} -> ${TARGET} (proxied=${PROXIED}, ttl=${TTL})..."
-                EXISTING_RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${NAME}.${ZONE_NAME}&type=CNAME" \
-                  -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                  -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
+          if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then
+            echo "=== Upserting Cloudflare DNS Records ==="
+            upsert_cname "astronomy" "${GATEWAY_URL}" "true"
+            [ "${{ inputs.deploy_incluster_grafana }}" != "false" ] && upsert_cname "grafana" "${GATEWAY_URL}" "true"
+            [ "${{ inputs.deploy_sonarqube }}" = "true" ]           && upsert_cname "sonar"   "${GATEWAY_URL}" "true"
 
-                if [ -n "$EXISTING_RECORD_ID" ]; then
-                  RESP=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_RECORD_ID}" \
-                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
-                  echo "Update Response: $(echo "$RESP" | jq -c '{success: .success, errors: .errors}')"
-                else
-                  RESP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
-                  echo "Create Response: $(echo "$RESP" | jq -c '{success: .success, errors: .errors}')"
-                fi
-              }
+            echo "=== Syncing ACM DNS Validation Records to Cloudflare ==="
+            ACM_ARN="$CUSTOM_ACM_ARN"
+            [ -z "$ACM_ARN" ] && ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" \
+              --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
 
-              # 1. Upsert Astronomy Storefront CNAME
-              upsert_cname "astronomy" "${GATEWAY_URL}" "true"
-
-              # 2. Upsert Grafana CNAME
-              if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-                upsert_cname "grafana" "${GATEWAY_URL}" "true"
-              fi
-
-              # 3. Upsert SonarQube CNAME
-              if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-                upsert_cname "sonar" "${GATEWAY_URL}" "true"
-              fi
-
-              # 4. Auto-discover and Upsert AWS ACM DNS Validation Records into Cloudflare
-              echo "Checking AWS ACM certificates for pending DNS validation records..."
-              ACM_VALIDATIONS=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[*].CertificateArn' --output text 2>/dev/null || echo "")
-              for CERT_ARN in $ACM_VALIDATIONS; do
-                REC_NAME=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null || echo "")
-                REC_VAL=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' --output text 2>/dev/null || echo "")
-                if [ -n "$REC_NAME" ] && [ "$REC_NAME" != "None" ] && [ -n "$REC_VAL" ] && [ "$REC_VAL" != "None" ]; then
-                  CLEAN_NAME=$(echo "$REC_NAME" | sed "s|\.${ZONE_NAME}\.*$||g")
-                  echo "Found ACM DNS Validation Record: ${CLEAN_NAME} -> ${REC_VAL}"
-                  upsert_cname "${CLEAN_NAME}" "${REC_VAL}" "false"
-                fi
+            if [ -n "$ACM_ARN" ] && [ "$ACM_ARN" != "None" ]; then
+              # Get all unique validation records (root + wildcard share same CNAME)
+              aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" \
+                --query 'Certificate.DomainValidationOptions[*].ResourceRecord' \
+                --output json 2>/dev/null | jq -c '.[] | select(.Name != null)' | sort -u | while read REC; do
+                  REC_NAME=$(echo $REC | jq -r '.Name' | sed "s/\.${DOMAIN}\.*$//" | sed 's/\.$//')
+                  REC_VAL=$(echo $REC | jq -r '.Value' | sed 's/\.$//')
+                  echo "ACM Validation: ${REC_NAME} -> ${REC_VAL}"
+                  upsert_cname "${REC_NAME}" "${REC_VAL}" "false"
               done
-
-              echo ""
-              echo "================================================================================"
-              echo "☁️ CLOUDFLARE SECURE HTTPS ENDPOINTS (Automatic SSL & DDoS Protection):"
-              echo "👉 🔭 Astronomy Shop Web Store: https://astronomy.${ZONE_NAME}"
-              if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-                echo "👉 📊 Grafana SRE SLO Panel:    https://grafana.${ZONE_NAME}"
-              else
-                echo "👉 📊 External Grafana Panel:   ${{ inputs.external_grafana_url }}"
-              fi
-              if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-                echo "👉 🛡️ SonarQube Security Panel: https://sonar.${ZONE_NAME}"
-              fi
-              echo "================================================================================"
-              echo ""
             fi
           fi
 
+          # --- Wait for ACM ISSUED (only if SSL enabled) ---
+          ACM_ARN="$CUSTOM_ACM_ARN"
+          [ -z "$ACM_ARN" ] && ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" \
+            --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
+
+          ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" \
+            --query 'Certificate.Status' --output text 2>/dev/null || echo "UNKNOWN")
+          echo "ACM Status: ${ACM_STATUS}"
+
+          if [ "$ENABLE_SSL" != "false" ] && [ "$ACM_STATUS" = "PENDING_VALIDATION" ]; then
+            echo "DNS validation CNAME synced. Waiting up to 10 min for ACM to become ISSUED..."
+            for i in {1..20}; do
+              sleep 30
+              ACM_STATUS=$(aws acm describe-certificate --certificate-arn "$ACM_ARN" --region "$AWS_REGION" \
+                --query 'Certificate.Status' --output text 2>/dev/null || echo "UNKNOWN")
+              echo "[$i/20] ACM Status: ${ACM_STATUS}"
+              [ "$ACM_STATUS" = "ISSUED" ] && break
+            done
+          fi
+
+          # Export for next step
+          echo "ACM_ARN=${ACM_ARN}" >> $GITHUB_ENV
+          echo "ACM_STATUS=${ACM_STATUS}" >> $GITHUB_ENV
+          echo "GATEWAY_URL=${GATEWAY_URL}" >> $GITHUB_ENV
+
+      - name: "[3/3] Upgrade Gateway to SSL (if ACM is ISSUED)"
+        if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.enable_ssl != false
+        run: |
+          if [ "$ACM_STATUS" = "ISSUED" ] && [ "${{ inputs.enable_ssl }}" != "false" ]; then
+            echo "✅ ACM is ISSUED. Upgrading ALB to HTTPS (Port 443)..."
+            sed -i.bak "s|arn:aws:acm:[^\"]*|${ACM_ARN}|g" observability/05-unified-ingress.yaml
+            kubectl apply -f observability/05-unified-ingress.yaml
+            kubectl rollout status deployment/unified-gateway -n gateway --timeout=120s || true
+            echo "✅ SSL upgrade complete!"
+          else
+            echo "ℹ️  ACM status is '${ACM_STATUS}'. Staying in HTTP mode."
+          fi
+
+      - name: "Print Final Endpoints"
+        if: inputs.action == 'deploy' || inputs.action == 'validate'
+        run: |
           echo ""
           echo "================================================================================"
-          echo "🌐 DIRECT AWS GATEWAY LOAD BALANCER (Single ALB on Port 80):"
-          echo "👉 🔭 Astronomy Shop Gateway: http://${GATEWAY_URL}"
-          if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-            echo "👉 📊 In-Cluster Grafana SRE: http://${GATEWAY_URL}/grafana (or Host: grafana.*)"
+          DOMAIN="devopsatolyesi.com"
+          echo "🔒 SSL Status: ${ACM_STATUS}"
+          if [ "$ACM_STATUS" = "ISSUED" ]; then
+            echo "👉 🔭 Astronomy Shop:  https://astronomy.${DOMAIN}"
+            echo "👉 📊 Grafana SRE:    https://grafana.${DOMAIN}"
           else
-            echo "👉 📊 External Grafana URL:   ${{ inputs.external_grafana_url }}"
-          fi
-          if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-            echo "👉 🛡️ In-Cluster SonarQube:   http://${GATEWAY_URL}/sonar (or Host: sonar.*)"
+            echo "👉 🔭 Astronomy Shop:  http://${GATEWAY_URL} (SSL pending)"
+            echo "👉 📊 Grafana SRE:    http://${GATEWAY_URL} (SSL pending)"
           fi
           echo "================================================================================"
           echo ""
