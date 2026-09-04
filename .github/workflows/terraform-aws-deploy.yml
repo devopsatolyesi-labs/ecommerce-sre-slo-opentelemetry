@@ -1,0 +1,239 @@
+name: "Terraform AWS EKS & OpenTelemetry SRE Platform CI/CD"
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target AWS Environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: "Terraform Execution Action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+          - status
+          - destroy
+      deploy_sre_stack:
+        description: "Deploy SRE Stack (OpenTelemetry Collector, Prometheus, Tempo, Grafana, SLOs)"
+        required: false
+        default: true
+        type: boolean
+      deploy_astronomy_shop:
+        description: "Deploy OpenTelemetry Astronomy Shop Microservices (via Helm)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  validate:
+    name: "Terraform Lint & Validate"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Check Formatting
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init (Local / Validation mode)
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  pipeline:
+    name: "AWS Deploy (${{ github.event.inputs.action || 'validation' }} - ${{ github.event.inputs.environment || 'dev' }})"
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Setup Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.31.0'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.15.0'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Prepare Dynamic S3 Backend (Pure S3, No DynamoDB)
+        id: s3-setup
+        run: |
+          AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="astronomy-tfstate-${ACCOUNT_ID}-${{ inputs.environment }}"
+          echo "Using S3 state bucket: ${BUCKET_NAME}"
+          echo "BUCKET_NAME=${BUCKET_NAME}" >> $GITHUB_ENV
+          echo "AWS_REGION=${AWS_REGION}" >> $GITHUB_ENV
+
+          # Check if bucket exists, create if not
+          if ! aws s3api head-bucket --bucket "${BUCKET_NAME}" 2>/dev/null; then
+            echo "Creating S3 bucket ${BUCKET_NAME} for Terraform State in ${AWS_REGION}..."
+            if [ "${AWS_REGION}" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "${BUCKET_NAME}" --region "${AWS_REGION}"
+            else
+              aws s3api create-bucket --bucket "${BUCKET_NAME}" --region "${AWS_REGION}" \
+                --create-bucket-configuration LocationConstraint="${AWS_REGION}"
+            fi
+            aws s3api put-bucket-versioning --bucket "${BUCKET_NAME}" --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "${BUCKET_NAME}" \
+              --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          else
+            echo "S3 state bucket ${BUCKET_NAME} is ready."
+          fi
+
+      - name: Terraform Init with S3 Backend
+        run: |
+          terraform init \
+            -backend-config="bucket=${BUCKET_NAME}" \
+            -backend-config="key=environments/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Terraform Plan
+        if: inputs.action == 'plan'
+        run: |
+          terraform plan \
+            -var-file="environments/${{ inputs.environment }}.tfvars" \
+            -no-color
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        run: |
+          terraform apply \
+            -auto-approve \
+            -var-file="environments/${{ inputs.environment }}.tfvars"
+
+      - name: Configure Kubeconfig & Inspect Nodes
+        if: inputs.action == 'apply' || inputs.action == 'status'
+        run: |
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          echo "Configuring kubectl for cluster: ${CLUSTER_NAME} in ${AWS_REGION}..."
+          aws eks --region "${AWS_REGION}" update-kubeconfig --name "${CLUSTER_NAME}"
+          kubectl get nodes -o wide
+
+      - name: Deploy SRE Observability Stack (OpenTelemetry Collector, Prometheus, Tempo, Grafana)
+        if: inputs.action == 'apply' && inputs.deploy_sre_stack == true
+        run: |
+          echo "Deploying OpenTelemetry Collector..."
+          kubectl apply -f ../observability/otel-collector-config.yaml
+          kubectl apply -f ../observability/04-otel-collector-deployment.yaml
+          kubectl rollout status deployment/otel-collector -n opentelemetry --timeout=180s || true
+
+          echo "Deploying Prometheus TSDB, Grafana Tempo, and Grafana SLO Dashboards..."
+          kubectl apply -f ../observability/01-prometheus-statefulset.yaml
+          kubectl apply -f ../observability/02-tempo-statefulset.yaml
+          kubectl apply -f ../observability/03-grafana-deployment.yaml
+          kubectl apply -f ../sre-slo/01-slo-definitions.yaml
+
+          # Patch Grafana service to LoadBalancer for external access
+          kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
+
+          kubectl rollout status statefulset/prometheus -n monitoring --timeout=180s || true
+          kubectl rollout status statefulset/tempo -n monitoring --timeout=180s || true
+          kubectl rollout status deployment/grafana -n monitoring --timeout=180s || true
+          kubectl -n monitoring get all
+
+      - name: Deploy OpenTelemetry Astronomy Shop Microservices (Helm)
+        if: inputs.action == 'apply' && inputs.deploy_astronomy_shop == true
+        run: |
+          echo "Deploying Astronomy Shop Microservices via Helm..."
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
+          helm repo update
+          helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
+            --namespace astronomy-shop --create-namespace \
+            --set default.env[0].name=OTEL_EXPORTER_OTLP_ENDPOINT \
+            --set default.env[0].value="http://otel-collector.opentelemetry.svc.cluster.local:4317" \
+            --timeout 8m || true
+
+          # Expose Frontend Web via LoadBalancer
+          kubectl -n astronomy-shop patch svc astronomy-shop-frontend -p '{"spec": {"type": "LoadBalancer"}}' || true
+          sleep 10
+          kubectl -n astronomy-shop get all
+
+      - name: Query & Display Public Load Balancer DNS URLs
+        if: inputs.action == 'apply' || inputs.action == 'status'
+        run: |
+          echo "=== Fetching AWS Load Balancer DNS Hostnames ==="
+          sleep 15
+          kubectl get svc -A -o wide
+
+          FRONTEND_URL=$(kubectl get svc -n astronomy-shop astronomy-shop-frontend -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
+          GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
+
+          echo ""
+          echo "================================================================================"
+          echo "🔭 OPEN TELEMETRY ASTRONOMY SHOP STOREFRONT URL:"
+          echo "👉 http://${FRONTEND_URL}:8080"
+          echo "--------------------------------------------------------------------------------"
+          echo "📊 GRAFANA SRE SLO & ERROR BUDGET DASHBOARD URL:"
+          echo "👉 http://${GRAFANA_URL}:3000"
+          echo "🔑 Grafana Username: admin | Password: BilgincIT454"
+          echo "================================================================================"
+          echo ""
+
+      - name: Run SRE Verification Tests
+        if: inputs.action == 'apply'
+        run: |
+          chmod +x ../scripts/validate.sh
+          ../scripts/validate.sh || true
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy'
+        run: |
+          echo "Starting clean teardown of EKS cluster and infrastructure..."
+          CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "astronomy-shop")
+          aws eks --region "${AWS_REGION}" update-kubeconfig --name "${CLUSTER_NAME}" 2>/dev/null || true
+          
+          # Delete K8s services first to release AWS ELB resources
+          helm uninstall astronomy-shop --namespace astronomy-shop 2>/dev/null || true
+          kubectl delete -f ../observability/ 2>/dev/null || true
+          kubectl delete -f ../sre-slo/ 2>/dev/null || true
+          
+          terraform destroy \
+            -auto-approve \
+            -var-file="environments/${{ inputs.environment }}.tfvars"
