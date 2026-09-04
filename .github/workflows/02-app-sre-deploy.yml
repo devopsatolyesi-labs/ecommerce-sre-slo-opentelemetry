@@ -218,21 +218,27 @@ jobs:
                 local NAME=$1
                 local TARGET=$2
                 local PROXIED=${3:-true}
-                echo "Configuring Cloudflare DNS: ${NAME}.${ZONE_NAME} -> ${TARGET} (proxied=${PROXIED})..."
+                local TTL=1
+                if [ "$PROXIED" = "false" ]; then
+                  TTL=60
+                fi
+                echo "Configuring Cloudflare DNS: ${NAME}.${ZONE_NAME} -> ${TARGET} (proxied=${PROXIED}, ttl=${TTL})..."
                 EXISTING_RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${NAME}.${ZONE_NAME}&type=CNAME" \
                   -H "Authorization: Bearer ${CF_API_TOKEN}" \
                   -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
 
                 if [ -n "$EXISTING_RECORD_ID" ]; then
-                  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_RECORD_ID}" \
+                  RESP=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_RECORD_ID}" \
                     -H "Authorization: Bearer ${CF_API_TOKEN}" \
                     -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":${PROXIED}}" > /dev/null
+                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
+                  echo "Update Response: $(echo "$RESP" | jq -c '{success: .success, errors: .errors}')"
                 else
-                  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+                  RESP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
                     -H "Authorization: Bearer ${CF_API_TOKEN}" \
                     -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":${PROXIED}}" > /dev/null
+                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
+                  echo "Create Response: $(echo "$RESP" | jq -c '{success: .success, errors: .errors}')"
                 fi
               }
 
