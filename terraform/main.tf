@@ -67,7 +67,17 @@ module "ecs" {
   subnet_ids   = module.vpc.private_subnets
 }
 
-# 4. Optional Cloudflare DNS & Automated SSL Module
+# 4. Optional AWS ACM Certificate Module (SSL/TLS for ALB)
+module "acm" {
+  source             = "./modules/acm"
+  enable_acm_ssl     = var.enable_acm_ssl
+  environment        = var.environment
+  domain_name        = var.domain_name
+  enable_cloudflare  = var.enable_cloudflare
+  cloudflare_zone_id = var.cloudflare_zone_id
+}
+
+# 5. Optional Cloudflare DNS & Automated SSL Module
 module "cloudflare" {
   source               = "./modules/cloudflare"
   enable_cloudflare    = var.enable_cloudflare
@@ -77,3 +87,4 @@ module "cloudflare" {
   subdomain_prefix     = var.subdomain_prefix
   alb_dns_name         = var.alb_dns_name
 }
+

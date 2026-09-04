@@ -52,6 +52,16 @@ on:
         required: false
         default: true
         type: boolean
+      enable_ssl:
+        description: "Enable AWS LoadBalancer SSL/TLS (Port 443 with ACM & HTTPS 301 Redirect)"
+        required: false
+        default: true
+        type: boolean
+      acm_certificate_arn:
+        description: "Custom AWS ACM Certificate ARN (Optional - auto-discovered if blank)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -144,11 +154,34 @@ jobs:
           sleep 5
           kubectl -n astronomy-shop get pods,svc
 
-      - name: Deploy Unified SRE Gateway & Reverse Proxy (Single ALB on Port 80)
+      - name: Deploy Unified SRE Gateway & Reverse Proxy (Single ALB with Toggleable SSL)
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Deploying Unified SRE Gateway (Single ALB Routing on Port 80)..."
-          kubectl apply -f observability/05-unified-ingress.yaml
+          ENABLE_SSL="${{ inputs.enable_ssl }}"
+          CUSTOM_ACM_ARN="${{ inputs.acm_certificate_arn }}"
+          AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+
+          echo "Deploying Unified SRE Gateway (Single ALB Routing)..."
+          if [ "$ENABLE_SSL" != "false" ]; then
+            echo "SSL Mode: ENABLED (Port 443 with ACM Termination & HTTPS 301 Redirect)"
+            ACM_ARN="$CUSTOM_ACM_ARN"
+            if [ -z "$ACM_ARN" ]; then
+              ACM_ARN=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[0].CertificateArn' --output text 2>/dev/null || echo "")
+            fi
+
+            if [ -n "$ACM_ARN" ] && [ "$ACM_ARN" != "None" ]; then
+              echo "Using AWS ACM Certificate ARN: ${ACM_ARN}"
+              sed -i.bak "s|arn:aws:acm:[^\"]*|${ACM_ARN}|g" observability/05-unified-ingress.yaml || true
+            else
+              echo "Notice: No ACM Certificate ARN found, proceeding with default configured manifest."
+            fi
+            kubectl apply -f observability/05-unified-ingress.yaml
+          else
+            echo "SSL Mode: DISABLED (Port 80 Plain HTTP Mode)"
+            # Strip ACM SSL annotations and HTTPS redirects for pure HTTP mode
+            grep -v 'aws-load-balancer-ssl' observability/05-unified-ingress.yaml | sed '/if ($http_x_forwarded_proto = "http")/,+2d' | kubectl apply -f -
+          fi
+
           kubectl rollout status deployment/unified-gateway -n gateway --timeout=180s || true
           kubectl get svc -n gateway
 

@@ -26,6 +26,12 @@ on:
           - apply
           - status
           - destroy
+      enable_acm_ssl:
+        description: "Provision AWS ACM SSL Certificate (Root + Wildcard DNS via Terraform)"
+        required: false
+        default: true
+        type: boolean
+
 
 permissions:
   contents: read
@@ -124,6 +130,7 @@ jobs:
         run: |
           terraform plan \
             -var-file="environments/${{ inputs.environment }}.tfvars" \
+            -var="enable_acm_ssl=${{ inputs.enable_acm_ssl }}" \
             -no-color
 
       - name: Terraform Apply
@@ -131,7 +138,9 @@ jobs:
         run: |
           terraform apply \
             -auto-approve \
-            -var-file="environments/${{ inputs.environment }}.tfvars"
+            -var-file="environments/${{ inputs.environment }}.tfvars" \
+            -var="enable_acm_ssl=${{ inputs.enable_acm_ssl }}"
+
 
       - name: Configure Kubeconfig & Inspect Nodes
         if: inputs.action == 'apply' || inputs.action == 'status'

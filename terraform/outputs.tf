@@ -43,8 +43,19 @@ output "grafana_https_url" {
   description = "Public HTTPS URL for Grafana SRE Dashboard via Cloudflare (if enabled)"
 }
 
+output "acm_certificate_arn" {
+  value       = module.acm.certificate_arn
+  description = "ARN of the AWS ACM SSL Certificate for Load Balancer"
+}
+
+output "acm_certificate_status" {
+  value       = module.acm.certificate_status
+  description = "Validation status of the AWS ACM Certificate"
+}
+
 output "cloudflare_enabled" {
   value       = module.cloudflare.cloudflare_enabled
   description = "Whether Cloudflare DNS automation is active"
 }
+
 

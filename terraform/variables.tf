@@ -65,8 +65,14 @@ variable "enable_ecs" {
 }
 
 # ==============================================================================
-# Cloudflare DNS & Automated SSL Configuration
+# AWS ACM SSL/TLS & Cloudflare Configuration
 # ==============================================================================
+
+variable "enable_acm_ssl" {
+  description = "Flag to enable AWS ACM Certificate creation and management via Terraform"
+  type        = bool
+  default     = true
+}
 
 variable "enable_cloudflare" {
   description = "Flag to enable automated Cloudflare DNS records and SSL proxy"
