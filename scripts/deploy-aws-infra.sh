@@ -36,7 +36,7 @@ AWS_REGION="${AWS_REGION:-$(aws configure get region || echo "us-east-1")}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 log_info "Connected to AWS Account: ${ACCOUNT_ID} (Region: ${AWS_REGION}, Target Env: ${ENV})"
 
-# Setup S3 State Bucket (Pure S3, No DynamoDB lock needed for sandbox)
+# Setup S3 State Bucket (Pure S3, No DynamoDB lock needed)
 BUCKET_NAME="${S3_BUCKET_NAME:-astronomy-tfstate-${ACCOUNT_ID}-${ENV}}"
 log_info "Ensuring S3 state bucket exists: ${BUCKET_NAME}..."
 if ! aws s3api head-bucket --bucket "${BUCKET_NAME}" 2>/dev/null; then

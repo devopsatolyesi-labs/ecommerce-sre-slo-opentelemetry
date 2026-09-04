@@ -1,5 +1,5 @@
 # ==============================================================================
-# Development Environment Variables (Pluralsight Sandbox Optimized)
+# Development Environment Variables (AWS Dev Profile - Optimized Footprint)
 # ==============================================================================
 aws_region          = "us-east-1"
 environment         = "dev"
