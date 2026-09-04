@@ -1,0 +1,102 @@
+name: "99 - Manual DNS Fix (One-Shot)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      alb_hostname:
+        description: "AWS ALB Hostname"
+        required: true
+        default: "aa758655452424e5d9100bfda64db80a-1761620983.us-east-1.elb.amazonaws.com"
+        type: string
+
+jobs:
+  fix-dns:
+    name: "Fix Cloudflare DNS & Wait for ACM"
+    runs-on: ubuntu-latest
+    env:
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Add Cloudflare CNAME Records & Sync ACM Validation
+        run: |
+
+          ALB="${{ inputs.alb_hostname }}"
+          DOMAIN="devopsatolyesi.com"
+          AWS_REGION="us-east-1"
+          CERT_ARN="arn:aws:acm:us-east-1:905418169890:certificate/99f26f54-d32a-4601-a842-0dabe8de1eaf"
+
+          upsert_cname() {
+            local NAME=$1
+            local TARGET=$2
+            local PROXIED=${3:-true}
+            local TTL=1
+            [ "$PROXIED" = "false" ] && TTL=60
+
+            echo "-> Upsert CNAME: ${NAME}.${DOMAIN} -> ${TARGET} (proxied=${PROXIED})"
+            EXISTING=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${NAME}.${DOMAIN}&type=CNAME" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
+
+            if [ -n "$EXISTING" ]; then
+              RES=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING}" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
+            else
+              RES=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":${TTL},\"proxied\":${PROXIED}}")
+            fi
+            echo "   Result: $(echo $RES | jq -c '{success:.success, errors:.errors}')"
+          }
+
+          echo "=== Step 1: Upsert application CNAME records ==="
+          upsert_cname "astronomy" "${ALB}" "true"
+          upsert_cname "grafana" "${ALB}" "true"
+
+          echo "=== Step 2: Sync ACM DNS-01 validation record ==="
+          REC_NAME=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" \
+            --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null || echo "")
+          REC_VAL=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" \
+            --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' --output text 2>/dev/null || echo "")
+
+          if [ -n "$REC_NAME" ] && [ "$REC_NAME" != "None" ]; then
+            CLEAN=$(echo "$REC_NAME" | sed 's/\.$//' | sed "s/\.${DOMAIN}$//")
+            echo "ACM Validation CNAME: ${CLEAN}.${DOMAIN} -> ${REC_VAL}"
+            upsert_cname "${CLEAN}" "$(echo $REC_VAL | sed 's/\.$//')" "false"
+          fi
+
+          echo "=== Step 3: Wait for ACM Certificate to become ISSUED ==="
+          for i in {1..20}; do
+            STATUS=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" \
+              --query 'Certificate.Status' --output text 2>/dev/null || echo "UNKNOWN")
+            echo "[$i/20] ACM Status: ${STATUS}"
+            if [ "$STATUS" = "ISSUED" ]; then
+              echo "✅ Certificate is ISSUED!"
+              break
+            fi
+            sleep 30
+          done
+
+          echo "=== Step 4: Final DNS verification ==="
+          echo "astronomy CNAME:"
+          curl -s "https://dns.google/resolve?name=astronomy.${DOMAIN}&type=CNAME" | jq -r '.Answer[0].data // "NOT FOUND"'
+          echo "grafana CNAME:"
+          curl -s "https://dns.google/resolve?name=grafana.${DOMAIN}&type=CNAME" | jq -r '.Answer[0].data // "NOT FOUND"'
+          echo "ACM validation CNAME:"
+          curl -s "https://dns.google/resolve?name=_35190420965634953d6dad5b34958ebf.${DOMAIN}&type=CNAME" | jq -r '.Answer[0].data // "NOT FOUND"'
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
