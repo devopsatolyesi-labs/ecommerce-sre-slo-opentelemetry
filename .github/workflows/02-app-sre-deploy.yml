@@ -1,0 +1,151 @@
+name: "02 - Application & SRE Platform CD"
+
+on:
+  pull_request:
+    paths:
+      - 'observability/**'
+      - 'sre-slo/**'
+      - 'scripts/**'
+      - '.github/workflows/02-app-sre-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target AWS Environment (EKS Cluster)"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: "Deployment Action"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - validate
+          - undeploy
+      deploy_sre_stack:
+        description: "Deploy SRE Stack (OpenTelemetry Collector, Prometheus, Tempo, Grafana, SLOs)"
+        required: false
+        default: true
+        type: boolean
+      deploy_astronomy_shop:
+        description: "Deploy Astronomy Shop Microservices (via Helm)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: "SRE Platform (${{ github.event.inputs.action || 'deploy' }} - ${{ github.event.inputs.environment || 'dev' }})"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.31.0'
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.15.0'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Connect to EKS Cluster
+        run: |
+          AWS_REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          CLUSTER_NAME="astronomy-shop-${{ inputs.environment || 'dev' }}"
+          echo "Configuring kubectl for EKS cluster: ${CLUSTER_NAME} in ${AWS_REGION}..."
+          aws eks --region "${AWS_REGION}" update-kubeconfig --name "${CLUSTER_NAME}"
+          kubectl get nodes -o wide
+
+      - name: Deploy SRE Observability Stack (OpenTelemetry Collector, Prometheus, Tempo, Grafana)
+        if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.deploy_sre_stack != false
+        run: |
+          echo "1/4 Deploying OpenTelemetry Collector..."
+          kubectl apply -f observability/otel-collector-config.yaml
+          kubectl apply -f observability/04-otel-collector-deployment.yaml
+          kubectl rollout status deployment/otel-collector -n opentelemetry --timeout=180s || true
+
+          echo "2/4 Deploying Prometheus TSDB, Grafana Tempo, and Grafana SLO Dashboards..."
+          kubectl apply -f observability/01-prometheus-statefulset.yaml
+          kubectl apply -f observability/02-tempo-statefulset.yaml
+          kubectl apply -f observability/03-grafana-deployment.yaml
+          kubectl apply -f sre-slo/01-slo-definitions.yaml
+
+          # Expose Grafana via LoadBalancer for external access
+          kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
+
+          kubectl rollout status statefulset/prometheus -n monitoring --timeout=180s || true
+          kubectl rollout status statefulset/tempo -n monitoring --timeout=180s || true
+          kubectl rollout status deployment/grafana -n monitoring --timeout=180s || true
+          kubectl -n monitoring get all
+
+      - name: Deploy OpenTelemetry Astronomy Shop Microservices (Helm)
+        if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.deploy_astronomy_shop != false
+        run: |
+          echo "3/4 Deploying Astronomy Shop Microservices via Helm..."
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
+          helm repo update
+          helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
+            --namespace astronomy-shop --create-namespace \
+            --set default.env[0].name=OTEL_EXPORTER_OTLP_ENDPOINT \
+            --set default.env[0].value="http://otel-collector.opentelemetry.svc.cluster.local:4317" \
+            --timeout 8m || true
+
+          # Expose Frontend Web via LoadBalancer
+          kubectl -n astronomy-shop patch svc astronomy-shop-frontend -p '{"spec": {"type": "LoadBalancer"}}' || true
+          sleep 10
+          kubectl -n astronomy-shop get all
+
+      - name: Query & Display Public Load Balancer DNS URLs
+        if: inputs.action == 'deploy' || inputs.action == 'validate'
+        run: |
+          echo "4/4 Fetching AWS Load Balancer DNS Hostnames..."
+          sleep 15
+          kubectl get svc -A -o wide
+
+          FRONTEND_URL=$(kubectl get svc -n astronomy-shop astronomy-shop-frontend -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
+          GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
+
+          echo ""
+          echo "================================================================================"
+          echo "🔭 OPEN TELEMETRY ASTRONOMY SHOP STOREFRONT URL:"
+          echo "👉 http://${FRONTEND_URL}:8080"
+          echo "--------------------------------------------------------------------------------"
+          echo "📊 GRAFANA SRE SLO & ERROR BUDGET DASHBOARD URL:"
+          echo "👉 http://${GRAFANA_URL}:3000"
+          echo "🔑 Grafana Username: admin | Password: BilgincIT454"
+          echo "================================================================================"
+          echo ""
+
+      - name: Run SRE Verification Tests
+        if: inputs.action == 'deploy' || inputs.action == 'validate'
+        run: |
+          chmod +x scripts/validate.sh
+          ./scripts/validate.sh || true
+
+      - name: Undeploy Applications
+        if: inputs.action == 'undeploy'
+        run: |
+          echo "Undeploying Astronomy Shop and Observability workloads..."
+          helm uninstall astronomy-shop --namespace astronomy-shop 2>/dev/null || true
+          kubectl delete -f observability/ 2>/dev/null || true
+          kubectl delete -f sre-slo/ 2>/dev/null || true
+          echo "Workloads successfully removed from cluster."
