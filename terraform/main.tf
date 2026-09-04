@@ -31,8 +31,9 @@ provider "aws" {
 }
 
 provider "cloudflare" {
-  api_token = var.cloudflare_api_token != "" ? var.cloudflare_api_token : null
+  api_token = var.cloudflare_api_token != "" ? var.cloudflare_api_token : "dummy_token_placeholder"
 }
+
 
 # 1. Reusable VPC Module (Single NAT Gateway for optimized cost & limits)
 module "vpc" {

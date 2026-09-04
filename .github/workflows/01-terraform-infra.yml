@@ -68,6 +68,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
+    env:
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME || 'devopsatolyesi.com' }}
     defaults:
       run:
         working-directory: terraform
