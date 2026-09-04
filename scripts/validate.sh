@@ -49,7 +49,16 @@ else
     log_fail "Grafana is not ready."
 fi
 
-# 5. Check SLO PrometheusRule
+# 5. Check Unified Gateway
+log_info "Verifying Unified SRE Gateway in 'gateway' namespace..."
+gateway_ready=$(kubectl get deployment unified-gateway -n gateway -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+if (( gateway_ready > 0 )); then
+    log_success "Unified SRE Gateway is active and routing."
+else
+    log_fail "Unified SRE Gateway is not ready."
+fi
+
+# 6. Check SLO PrometheusRule
 log_info "Verifying SRE SLO Alert Rules..."
 if kubectl get prometheusrule ecommerce-sre-slo-rules -n monitoring >/dev/null 2>&1; then
     log_success "SRE SLO Alert Rules (Availability & Latency) are active."

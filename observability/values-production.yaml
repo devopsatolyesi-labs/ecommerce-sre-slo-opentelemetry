@@ -1,9 +1,7 @@
 # ==============================================================================
 # OpenTelemetry Astronomy Shop - Production SRE Helm Values
-# Disables bundled duplicate observability stacks and connects to dedicated LGTM stack
 # ==============================================================================
 
-# Disable bundled duplicate observability components
 prometheus:
   enabled: false
 
@@ -16,8 +14,9 @@ jaeger:
 opentelemetry-collector:
   enabled: false
 
-# Global environment configuration with robust service naming and OTLP gRPC endpoint
 default:
+  useDefault:
+    env: false
   env:
     - name: OTEL_SERVICE_NAME
       valueFrom:
@@ -31,45 +30,13 @@ default:
     - name: OTEL_RESOURCE_ATTRIBUTES
       value: "service.version=3.0.0,deployment.environment=dev"
 
-# Frontend and Envoy Gateway configuration
-frontend:
-  enabled: true
-  service:
-    type: ClusterIP
-    port: 8080
+components:
+  frontend:
+    service:
+      type: ClusterIP
+      port: 8080
 
-frontend-proxy:
-  enabled: true
-  service:
-    type: LoadBalancer
-    port: 8080
-
-image-provider:
-  enabled: true
-  env:
-    - name: OTEL_SERVICE_NAME
-      value: image-provider
-    - name: OTEL_COLLECTOR_NAME
-      value: otel-collector
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
-
-recommendation:
-  enabled: true
-  env:
-    - name: OTEL_SERVICE_NAME
-      value: recommendation
-    - name: OTEL_COLLECTOR_NAME
-      value: otel-collector
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
-
-telemetry-docs:
-  enabled: true
-  env:
-    - name: OTEL_SERVICE_NAME
-      value: telemetry-docs
-    - name: OTEL_COLLECTOR_NAME
-      value: otel-collector
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
+  frontend-proxy:
+    service:
+      type: LoadBalancer
+      port: 8080

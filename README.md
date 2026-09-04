@@ -109,7 +109,7 @@ chmod +x scripts/*.sh
 
 ## 🔐 GitHub Secrets & Variables Yapılandırması
 
-GitHub Actions üzerinden tek tıkla canlı AWS ortamına dağıtım ve otomatik Cloudflare DNS/SSL yönetimi için Repository ayarlarında tanımlanabilen değişkenler:
+GitHub Actions üzerinden tek tıkla canlı AWS ortamına dağıtım ve otomatik Cloudflare DNS/SSL yönetimi için Repository ayarlarında (`Settings -> Secrets and variables -> Actions`) tanımlanabilen değişkenler:
 
 ### 1. GitHub Secrets (Gizli Anahtarlar)
 | Secret Adı | Açıklama |
@@ -121,6 +121,7 @@ GitHub Actions üzerinden tek tıkla canlı AWS ortamına dağıtım ve otomatik
 | `CLOUDFLARE_API_TOKEN` | Cloudflare DNS kayıtlarını otomatik oluşturmak için API token (`Zone.DNS:Edit`) |
 | `CLOUDFLARE_ZONE_ID` | Cloudflare alan adı Zone ID'si |
 | `SONAR_TOKEN` | SonarQube analiz ve kalite kapısı (Quality Gate) erişim tokenı |
+| `GRAFANA_ADMIN_PASSWORD` | Küme içi Grafana yönetici şifresi (Varsayılan: `${GRAFANA_ADMIN_PASSWORD}`) |
 
 ### 2. GitHub Variables (Ortam Değişkenleri)
 | Değişken Adı | Değer / Örnek | Açıklama |
@@ -129,6 +130,51 @@ GitHub Actions üzerinden tek tıkla canlı AWS ortamına dağıtım ve otomatik
 | `SUBDOMAIN_PREFIX` | `astronomy` | Mağaza alt alan adı (`https://astronomy.devopsatolyesi.com`) |
 | `GRAFANA_HOST_URL` | `https://grafana.devopsatolyesi.com` | Harici Grafana panel adresi |
 | `SONAR_HOST_URL` | `https://sonar.devopsatolyesi.com` | Harici SonarQube sunucu adresi |
+
+---
+
+## 🎓 Öğrenciler İçin: Token ve Anahtarları Alma Kılavuzu
+
+Bu platformu sıfırdan kuracak öğrencilerin ihtiyaç duyduğu token ve yetki anahtarlarını oluşturma adımları:
+
+### 1. AWS Credentials (Access Key ID & Secret) Nasıl Alınır?
+* **Konsoldan (Web UI):**
+  1. AWS Yönetim Konsolu'na giriş yapın -> Arama çubuğuna **IAM** yazın.
+  2. Sol menüden **Users (Kullanıcılar)** -> Kendi kullanıcınızı seçin.
+  3. **Security credentials (Güvenlik kimlik bilgileri)** sekmesine geçin.
+  4. **Access keys** bölümünden **Create access key** butonuna tıklayın.
+  5. *Use case* olarak **Command Line Interface (CLI)** seçin ve anahtarları indirin (`.csv`).
+* **AWS CLI ile:**
+  ```bash
+  aws iam create-access-key --user-name <KULLANICI_ADINIZ>
+  ```
+
+### 2. Cloudflare API Token ve Zone ID Nasıl Alınır?
+* **Zone ID:**
+  1. Cloudflare Dashboard'a girin -> Alan adınızı (`devopsatolyesi.com`) seçin.
+  2. **Overview** sayfasında sağ alt sütunda yer alan **Zone ID** (32 karakter) değerini kopyalayın.
+* **API Token:**
+  1. Sağ üstteki profil simgenize tıklayın -> **My Profile** -> **API Tokens** seçin.
+  2. **Create Token** -> **Edit zone DNS** şablonunu seçin (*Use template*).
+  3. *Zone Resources* alanında `Include -> Specific zone -> <alan_adiniz>` seçin.
+  4. **Continue to summary** -> **Create Token** diyerek token'ı kopyalayın.
+
+### 3. SonarQube Token Nasıl Alınır?
+* **SonarQube Web UI:**
+  1. SonarQube panelinize giriş yapın (`https://sonar.devopsatolyesi.com`).
+  2. Sağ üstten profil simgenize tıklayın -> **My Account** -> **Security** sekmesine geçin.
+  3. **Generate Tokens** kısmında:
+     * *Name:* `github-actions-ci`
+     * *Type:* `User Token` veya `Project Analysis Token`
+     * *Expires in:* `30 days` veya `No expiration`
+  4. **Generate** butonuna basıp üretilen `squ_...` tokenını kopyalayın.
+
+### 4. Grafana Service Account / API Key Nasıl Alınır?
+* **Grafana Web UI:**
+  1. Grafana panelinize yönetici olarak giriş yapın.
+  2. Sol alt dişli çark simgesinden **Administration** -> **Users and access** -> **Service Accounts** seçin.
+  3. **Add service account** diyerek `github-sre-ci` adını verin ve `Admin` veya `Editor` rolü atayın.
+  4. **Add service account token** -> **Generate token** diyerek `glsa_...` tokenını kopyalayın.
 
 ---
 
@@ -169,14 +215,13 @@ Sistem iki bağımsız ve kurumsal DevOps prensiplerine uygun iş akışından o
 
 #### 1. Cloudflare / Canlı Domain Üzerinden:
 * 🔭 **Astronomy Shop Mağazası:** `https://astronomy.devopsatolyesi.com`
-* 📊 **Grafana SRE SLO Paneli:** `https://grafana.devopsatolyesi.com` *(Kullanıcı: `admin` / Şifre: `BilgincIT454`)*
+* 📊 **Grafana SRE SLO Paneli:** `https://grafana.devopsatolyesi.com`
 * 🛡️ **SonarQube Kalite Paneli:** `https://sonar.devopsatolyesi.com`
 
-#### 2. Doğrudan AWS Load Balancer Üzerinden (Cloudflare kapalıyken):
-* 🔭 **Astronomy Shop:** `http://<ALB-DNS-NAME>:8080`
-* 📊 **Grafana:** `http://<ALB-DNS-NAME>:3000` *(Kullanıcı: `admin` / Şifre: `BilgincIT454`)*
-```
-* **URL:** [http://localhost:8080](http://localhost:8080)
+#### 2. Doğrudan AWS Single Gateway Load Balancer Üzerinden (Standart Port 80):
+* 🔭 **Astronomy Shop Mağazası:** `http://<ALB-DNS-NAME>` (Port 80)
+* 📊 **Grafana SRE Paneli:** `http://<ALB-DNS-NAME>/grafana` (veya `Host: grafana.*`)
+* 🛡️ **SonarQube Kalite Paneli:** `http://<ALB-DNS-NAME>/sonar` (veya `Host: sonar.*`)
 
 #### 3. Prometheus Arayüzü & Kural Kontrolü:
 ```bash

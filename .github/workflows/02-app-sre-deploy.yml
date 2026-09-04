@@ -111,7 +111,7 @@ jobs:
           if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
             echo "Deploying In-Cluster Grafana Dashboard..."
             kubectl apply -f observability/03-grafana-deployment.yaml
-            kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
+            kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "ClusterIP"}}' || true
             kubectl rollout status deployment/grafana -n monitoring --timeout=180s || true
           fi
 
@@ -138,11 +138,19 @@ jobs:
             -f observability/values-production.yaml \
             --timeout 10m || true
 
-          # Ensure frontend-proxy is exposed via LoadBalancer and frontend is ClusterIP
+          # Ensure all microservices use ClusterIP behind the Unified Gateway
           kubectl -n astronomy-shop patch svc frontend -p '{"spec": {"type": "ClusterIP"}}' || true
-          kubectl -n astronomy-shop patch svc frontend-proxy -p '{"spec": {"type": "LoadBalancer"}}' || true
-          sleep 10
+          kubectl -n astronomy-shop patch svc frontend-proxy -p '{"spec": {"type": "ClusterIP"}}' || true
+          sleep 5
           kubectl -n astronomy-shop get pods,svc
+
+      - name: Deploy Unified SRE Gateway & Reverse Proxy (Single ALB on Port 80)
+        if: inputs.action == 'deploy' || github.event_name == 'pull_request'
+        run: |
+          echo "Deploying Unified SRE Gateway (Single ALB Routing on Port 80)..."
+          kubectl apply -f observability/05-unified-ingress.yaml
+          kubectl rollout status deployment/unified-gateway -n gateway --timeout=180s || true
+          kubectl get svc -n gateway
 
       - name: Query Public Load Balancer & Configure Cloudflare DNS / SSL
         if: inputs.action == 'deploy' || inputs.action == 'validate'
@@ -150,22 +158,17 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
-          echo "4/4 Fetching AWS Load Balancer Hostnames..."
+          echo "4/4 Fetching Single Unified AWS Load Balancer Hostname (Port 80)..."
           for i in {1..30}; do
-            FRONTEND_URL=$(kubectl get svc -n astronomy-shop frontend-proxy -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-            GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-            if [ -n "$FRONTEND_URL" ]; then
+            GATEWAY_URL=$(kubectl get svc -n gateway unified-gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$GATEWAY_URL" ]; then
               break
             fi
-            echo "Waiting for Load Balancers to provision DNS hostnames... ($i/30)"
+            echo "Waiting for Gateway ALB to provision DNS hostname... ($i/30)"
             sleep 5
           done
 
-          if [ -z "$GRAFANA_URL" ]; then
-            GRAFANA_URL=$FRONTEND_URL
-          fi
-
-          echo "AWS Load Balancer Gateway Hostname: ${FRONTEND_URL}"
+          echo "AWS Single Gateway ALB Hostname: ${GATEWAY_URL}"
 
           # Check Cloudflare Integration
           if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then
@@ -199,14 +202,14 @@ jobs:
                 fi
               }
 
-              upsert_cname "astronomy" "${FRONTEND_URL}"
+              upsert_cname "astronomy" "${GATEWAY_URL}"
 
               if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-                upsert_cname "grafana" "${GRAFANA_URL}"
+                upsert_cname "grafana" "${GATEWAY_URL}"
               fi
 
               if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-                upsert_cname "sonar" "${FRONTEND_URL}"
+                upsert_cname "sonar" "${GATEWAY_URL}"
               fi
 
               echo ""
@@ -215,13 +218,11 @@ jobs:
               echo "👉 🔭 Astronomy Shop Web Store: https://astronomy.${ZONE_NAME}"
               if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
                 echo "👉 📊 Grafana SRE SLO Panel:    https://grafana.${ZONE_NAME}"
-                echo "   🔑 Grafana Username: admin | Password: BilgincIT454"
               else
                 echo "👉 📊 External Grafana Panel:   ${{ inputs.external_grafana_url }}"
               fi
               if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
                 echo "👉 🛡️ SonarQube Security Panel: https://sonar.${ZONE_NAME}"
-                echo "   🔑 SonarQube Username: admin | Password: admin"
               fi
               echo "================================================================================"
               echo ""
@@ -230,17 +231,15 @@ jobs:
 
           echo ""
           echo "================================================================================"
-          echo "🌐 DIRECT AWS LOAD BALANCER ENDPOINTS (For Manual DNS / No-Cloudflare Mode):"
-          echo "👉 🔭 Astronomy Shop Gateway: http://${FRONTEND_URL}:8080"
+          echo "🌐 DIRECT AWS GATEWAY LOAD BALANCER (Single ALB on Port 80):"
+          echo "👉 🔭 Astronomy Shop Gateway: http://${GATEWAY_URL}"
           if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-            echo "👉 📊 In-Cluster Grafana SRE: http://${GRAFANA_URL}:3000"
-            echo "   🔑 Grafana Username: admin | Password: BilgincIT454"
+            echo "👉 📊 In-Cluster Grafana SRE: http://${GATEWAY_URL}/grafana (or Host: grafana.*)"
           else
             echo "👉 📊 External Grafana URL:   ${{ inputs.external_grafana_url }}"
           fi
           if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-            echo "👉 🛡️ In-Cluster SonarQube:   http://${FRONTEND_URL}:9000"
-            echo "   🔑 SonarQube Username: admin | Password: admin"
+            echo "👉 🛡️ In-Cluster SonarQube:   http://${GATEWAY_URL}/sonar (or Host: sonar.*)"
           fi
           echo "================================================================================"
           echo ""
