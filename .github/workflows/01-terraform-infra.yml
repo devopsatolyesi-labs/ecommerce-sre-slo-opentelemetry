@@ -114,6 +114,7 @@ jobs:
       - name: Terraform Init with S3 Backend
         run: |
           terraform init \
+            -reconfigure \
             -backend-config="bucket=${BUCKET_NAME}" \
             -backend-config="key=environments/${{ inputs.environment }}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}"
