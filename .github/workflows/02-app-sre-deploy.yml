@@ -217,7 +217,8 @@ jobs:
               upsert_cname() {
                 local NAME=$1
                 local TARGET=$2
-                echo "Configuring Cloudflare DNS: ${NAME}.${ZONE_NAME} -> ${TARGET} (proxied=true)..."
+                local PROXIED=${3:-true}
+                echo "Configuring Cloudflare DNS: ${NAME}.${ZONE_NAME} -> ${TARGET} (proxied=${PROXIED})..."
                 EXISTING_RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${NAME}.${ZONE_NAME}&type=CNAME" \
                   -H "Authorization: Bearer ${CF_API_TOKEN}" \
                   -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
@@ -226,24 +227,40 @@ jobs:
                   curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_RECORD_ID}" \
                     -H "Authorization: Bearer ${CF_API_TOKEN}" \
                     -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":true}" > /dev/null
+                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":${PROXIED}}" > /dev/null
                 else
                   curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
                     -H "Authorization: Bearer ${CF_API_TOKEN}" \
                     -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":true}" > /dev/null
+                    --data "{\"type\":\"CNAME\",\"name\":\"${NAME}\",\"content\":\"${TARGET}\",\"ttl\":1,\"proxied\":${PROXIED}}" > /dev/null
                 fi
               }
 
-              upsert_cname "astronomy" "${GATEWAY_URL}"
+              # 1. Upsert Astronomy Storefront CNAME
+              upsert_cname "astronomy" "${GATEWAY_URL}" "true"
 
+              # 2. Upsert Grafana CNAME
               if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
-                upsert_cname "grafana" "${GATEWAY_URL}"
+                upsert_cname "grafana" "${GATEWAY_URL}" "true"
               fi
 
+              # 3. Upsert SonarQube CNAME
               if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
-                upsert_cname "sonar" "${GATEWAY_URL}"
+                upsert_cname "sonar" "${GATEWAY_URL}" "true"
               fi
+
+              # 4. Auto-discover and Upsert AWS ACM DNS Validation Records into Cloudflare
+              echo "Checking AWS ACM certificates for pending DNS validation records..."
+              ACM_VALIDATIONS=$(aws acm list-certificates --region "$AWS_REGION" --query 'CertificateSummaryList[*].CertificateArn' --output text 2>/dev/null || echo "")
+              for CERT_ARN in $ACM_VALIDATIONS; do
+                REC_NAME=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null || echo "")
+                REC_VAL=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' --output text 2>/dev/null || echo "")
+                if [ -n "$REC_NAME" ] && [ "$REC_NAME" != "None" ] && [ -n "$REC_VAL" ] && [ "$REC_VAL" != "None" ]; then
+                  CLEAN_NAME=$(echo "$REC_NAME" | sed "s|\.${ZONE_NAME}\.*$||g")
+                  echo "Found ACM DNS Validation Record: ${CLEAN_NAME} -> ${REC_VAL}"
+                  upsert_cname "${CLEAN_NAME}" "${REC_VAL}" "false"
+                fi
+              done
 
               echo ""
               echo "================================================================================"
