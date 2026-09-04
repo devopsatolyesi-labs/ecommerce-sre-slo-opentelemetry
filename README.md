@@ -107,57 +107,74 @@ Modüler Terraform altyapısını tek komutla ayağa kaldırın:
 ```bash
 chmod +x scripts/*.sh
 
+## 🔐 GitHub Secrets & Variables Yapılandırması
+
+GitHub Actions üzerinden tek tıkla canlı AWS ortamına dağıtım ve otomatik Cloudflare DNS/SSL yönetimi için Repository ayarlarında tanımlanabilen değişkenler:
+
+### 1. GitHub Secrets (Gizli Anahtarlar)
+| Secret Adı | Açıklama |
+| :--- | :--- |
+| `AWS_ACCESS_KEY_ID` | AWS IAM kullanıcısı erişim anahtarı (EKS, VPC, S3 yetkili) |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM kullanıcısı gizli anahtarı |
+| `AWS_ACCOUNT_ID` | AWS 12 haneli hesap numarası (Örn: `905418169890`) |
+| `AWS_REGION` | AWS bölgesi (Varsayılan: `us-east-1`) |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare DNS kayıtlarını otomatik oluşturmak için API token (`Zone.DNS:Edit`) |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare alan adı Zone ID'si |
+| `SONAR_TOKEN` | SonarQube analiz ve kalite kapısı (Quality Gate) erişim tokenı |
+
+### 2. GitHub Variables (Ortam Değişkenleri)
+| Değişken Adı | Değer / Örnek | Açıklama |
+| :--- | :--- | :--- |
+| `DOMAIN_NAME` | `devopsatolyesi.com` | Ana alan adı |
+| `SUBDOMAIN_PREFIX` | `astronomy` | Mağaza alt alan adı (`https://astronomy.devopsatolyesi.com`) |
+| `GRAFANA_HOST_URL` | `https://grafana.devopsatolyesi.com` | Harici Grafana panel adresi |
+| `SONAR_HOST_URL` | `https://sonar.devopsatolyesi.com` | Harici SonarQube sunucu adresi |
+
+---
+
+## 🚀 GitHub Actions ile Otomatik CI/CD Dağıtımı
+
+Sistem iki bağımsız ve kurumsal DevOps prensiplerine uygun iş akışından oluşur:
+
+### 1. Altyapı Pipeline'ı (`01 - Terraform AWS Infrastructure CI/CD`)
+* **Tetikleyici:** `workflow_dispatch` (Parametreler: `environment: dev/staging/prod`, `action: plan/apply/status/destroy`)
+* **İşlevi:** S3 State Bucket'ını otomatik oluşturur, Multi-AZ VPC, EKS v1.32 kümesi ve 3x `t3.medium` EC2 Managed Node Group provizyonunu tamamlar.
+
+### 2. Uygulama & SRE Pipeline'ı (`02 - Application & SRE Platform CD`)
+* **Tetikleyici:** `workflow_dispatch` (Parametreler: `deploy_sre_stack`, `deploy_astronomy_shop`, `deploy_incluster_grafana`, `deploy_sonarqube`)
+* **İşlevi:**
+  1. OpenTelemetry Collector, Prometheus TSDB ve Grafana Tempo StatefulSet'lerini kurar.
+  2. SRE SLO çok pencereli tüketim kurallarını ConfigMap olarak Prometheus'a bağlar.
+  3. Astronomy Shop mikroservislerini `values-production.yaml` ile Helm üzerinden ayağa kaldırır (Tüm ürün görselleri ve Envoy proxy aktif edilir).
+  4. Cloudflare credentials varsa `astronomy.devopsatolyesi.com`, `grafana.devopsatolyesi.com` ve `sonar.devopsatolyesi.com` DNS CNAME ve SSL kayıtlarını otomatik açar; yoksa doğrudan tekil AWS ALB DNS hostnamesini sunar.
+
+---
+
+## 💻 Manuel & Yerel Kurulum Kılavuzu
+
+İsteyen kullanıcılar terminal üzerinden de aynı adımları çalıştırabilir:
+
+### Adım 1: AWS EKS ve VPC Altyapısının Kurulması
+```bash
 # Dev ortamı için altyapıyı dağıtın:
 ./scripts/deploy-aws-infra.sh dev
 ```
 
-Bu betik otomatik olarak:
-1. AWS hesabınıza özel şifreli ve versiyonlu **Amazon S3 State Bucket**'ını (`astronomy-tfstate-<ACCOUNT_ID>-dev`) oluşturur.
-2. Terraform modüllerini init eder ve `dev.tfvars` ile onaylı provizyon yapar.
-3. EKS kümesi oluştuktan sonra yerel `~/.kube/config` dosyanızı günceller ve worker node'ların hazır olduğunu doğrular:
-
-```bash
-kubectl get nodes -o wide
-```
-
-### Adım 3: SRE ve Observability Yığınının Dağıtılması
-OpenTelemetry Collector, Prometheus StatefulSet, Grafana Tempo ve Grafana panolarını kurun:
-
+### Adım 2: SRE, Observability ve Astronomy Shop'un Dağıtılması
 ```bash
 ./scripts/deploy-sre-platform.sh
 ```
 
-Kurulum durumunu kontrol edin:
-```bash
-# İzleme StatefulSet'lerini ve servisleri kontrol edin
-kubectl get statefulsets,pods,svc -n monitoring
-kubectl get pods -n opentelemetry
-```
+### Adım 3: Servis ve Dashboard Arayüzlerine Erişim
 
-### Adım 4: Astronomy Shop Mikroservislerinin Dağıtılması
-Astronomy Shop mikroservisleri `deploy-sre-platform.sh` tarafından Helm ile otomatik dağıtılır. Pod durumlarını inceleyin:
+#### 1. Cloudflare / Canlı Domain Üzerinden:
+* 🔭 **Astronomy Shop Mağazası:** `https://astronomy.devopsatolyesi.com`
+* 📊 **Grafana SRE SLO Paneli:** `https://grafana.devopsatolyesi.com` *(Kullanıcı: `admin` / Şifre: `BilgincIT454`)*
+* 🛡️ **SonarQube Kalite Paneli:** `https://sonar.devopsatolyesi.com`
 
-```bash
-kubectl get pods -n astronomy-shop
-```
-*(Tüm mikroservislerin `Running` durumuna geçmesi 2-3 dakika sürebilir).*
-
-### Adım 5: Servis ve Dashboard Arayüzlerine Erişim
-
-Terminalinizde port-forward komutlarını çalıştırarak arayüzlere bağlanabilirsiniz:
-
-#### 1. Grafana SLO & Tracing Panosu:
-```bash
-kubectl port-forward svc/grafana -n monitoring 3000:3000
-```
-* **URL:** [http://localhost:3000](http://localhost:3000)
-* **Kullanıcı:** `admin`
-* **Şifre:** `BilgincIT454`
-* **Pano Yolu:** *Dashboards -> E-Commerce SRE Service Level Objectives (SLO) & Error Budgets*
-
-#### 2. Astronomy Shop E-Ticaret Arayüzü:
-```bash
-kubectl port-forward svc/astronomy-shop-frontend -n astronomy-shop 8080:8080
+#### 2. Doğrudan AWS Load Balancer Üzerinden (Cloudflare kapalıyken):
+* 🔭 **Astronomy Shop:** `http://<ALB-DNS-NAME>:8080`
+* 📊 **Grafana:** `http://<ALB-DNS-NAME>:3000` *(Kullanıcı: `admin` / Şifre: `BilgincIT454`)*
 ```
 * **URL:** [http://localhost:8080](http://localhost:8080)
 

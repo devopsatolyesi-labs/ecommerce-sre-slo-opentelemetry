@@ -38,14 +38,38 @@ frontend:
     type: ClusterIP
     port: 8080
 
-frontendProxy:
+frontend-proxy:
   enabled: true
   service:
     type: LoadBalancer
     port: 8080
 
-imageProvider:
+image-provider:
   enabled: true
-  service:
-    type: ClusterIP
-    port: 8081
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: image-provider
+    - name: OTEL_COLLECTOR_NAME
+      value: otel-collector
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
+
+recommendation:
+  enabled: true
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: recommendation
+    - name: OTEL_COLLECTOR_NAME
+      value: otel-collector
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
+
+telemetry-docs:
+  enabled: true
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: telemetry-docs
+    - name: OTEL_COLLECTOR_NAME
+      value: otel-collector
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
