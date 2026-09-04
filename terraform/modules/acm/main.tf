@@ -38,11 +38,13 @@ resource "aws_acm_certificate" "cert" {
 # 2. Automated Cloudflare DNS Validation Records (if Cloudflare enabled)
 resource "cloudflare_record" "acm_validation" {
   for_each = var.enable_acm_ssl && var.enable_cloudflare && var.cloudflare_zone_id != "" && length(aws_acm_certificate.cert) > 0 ? {
-    for dvo in aws_acm_certificate.cert[0].domain_validation_options : dvo.resource_record_name => {
-      name   = trimsuffix(dvo.resource_record_name, ".")
-      record = trimsuffix(dvo.resource_record_value, ".")
-      type   = dvo.resource_record_type
-    }
+    for dvo in distinct([
+      for dvo in aws_acm_certificate.cert[0].domain_validation_options : {
+        name   = trimsuffix(dvo.resource_record_name, ".")
+        record = trimsuffix(dvo.resource_record_value, ".")
+        type   = dvo.resource_record_type
+      }
+    ]) : dvo.name => dvo
   } : {}
 
   zone_id = var.cloudflare_zone_id
@@ -53,6 +55,7 @@ resource "cloudflare_record" "acm_validation" {
   ttl     = 60
   comment = "AWS ACM DNS Validation"
 }
+
 
 # 3. ACM Certificate Validation Waiter
 resource "aws_acm_certificate_validation" "cert_valid" {
