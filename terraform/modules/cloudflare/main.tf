@@ -46,3 +46,15 @@ resource "cloudflare_record" "grafana" {
   ttl     = 1 # Automatic when proxied
   comment = "Managed by Terraform - Grafana SRE SLO & Observability Dashboard"
 }
+
+# 4. Optional CNAME Record for SonarQube Code Quality Server
+resource "cloudflare_record" "sonarqube" {
+  count   = var.enable_cloudflare && var.cloudflare_zone_id != "" && var.alb_dns_name != "" ? 1 : 0
+  zone_id = var.cloudflare_zone_id
+  name    = var.subdomain_prefix != "" ? "sonar-${var.subdomain_prefix}" : "sonar"
+  value   = local.target_host
+  type    = "CNAME"
+  proxied = true
+  ttl     = 1 # Automatic when proxied
+  comment = "Managed by Terraform - SonarQube Code Quality & Security Platform"
+}

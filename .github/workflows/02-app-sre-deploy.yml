@@ -32,6 +32,21 @@ on:
         required: false
         default: true
         type: boolean
+      deploy_incluster_grafana:
+        description: "Deploy In-Cluster Grafana (Set false to use external Grafana)"
+        required: false
+        default: true
+        type: boolean
+      deploy_sonarqube:
+        description: "Deploy In-Cluster SonarQube Server"
+        required: false
+        default: false
+        type: boolean
+      external_grafana_url:
+        description: "External Grafana URL (Fallback if in-cluster Grafana disabled)"
+        required: false
+        default: "https://grafana.devopsatolyesi.com"
+        type: string
       deploy_astronomy_shop:
         description: "Deploy Astronomy Shop Microservices (via Helm)"
         required: false
@@ -88,19 +103,29 @@ jobs:
           kubectl apply -f observability/04-otel-collector-deployment.yaml
           kubectl rollout status deployment/otel-collector -n opentelemetry --timeout=180s || true
 
-          echo "2/4 Deploying Prometheus TSDB, Grafana Tempo, and Grafana SLO Dashboards..."
+          echo "2/4 Deploying Prometheus TSDB & Grafana Tempo..."
           kubectl apply -f sre-slo/01-slo-definitions.yaml
           kubectl apply -f observability/01-prometheus-statefulset.yaml
           kubectl apply -f observability/02-tempo-statefulset.yaml
-          kubectl apply -f observability/03-grafana-deployment.yaml
 
-          # Expose Grafana via LoadBalancer for external access
-          kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
+          if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
+            echo "Deploying In-Cluster Grafana Dashboard..."
+            kubectl apply -f observability/03-grafana-deployment.yaml
+            kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
+            kubectl rollout status deployment/grafana -n monitoring --timeout=180s || true
+          fi
 
           kubectl rollout status statefulset/prometheus -n monitoring --timeout=180s || true
           kubectl rollout status statefulset/tempo -n monitoring --timeout=180s || true
-          kubectl rollout status deployment/grafana -n monitoring --timeout=180s || true
           kubectl -n monitoring get all
+
+      - name: Deploy SonarQube Code Quality Server (Optional In-Cluster)
+        if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.deploy_sonarqube == true
+        run: |
+          echo "Deploying in-cluster SonarQube..."
+          kubectl apply -f observability/06-sonarqube-deployment.yaml
+          kubectl rollout status deployment/sonarqube -n sonarqube --timeout=240s || true
+          kubectl get pods,svc -n sonarqube
 
       - name: Deploy OpenTelemetry Astronomy Shop Microservices (Helm)
         if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.deploy_astronomy_shop != false
@@ -175,14 +200,29 @@ jobs:
               }
 
               upsert_cname "astronomy" "${FRONTEND_URL}"
-              upsert_cname "grafana" "${GRAFANA_URL}"
+
+              if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
+                upsert_cname "grafana" "${GRAFANA_URL}"
+              fi
+
+              if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
+                upsert_cname "sonar" "${FRONTEND_URL}"
+              fi
 
               echo ""
               echo "================================================================================"
               echo "☁️ CLOUDFLARE SECURE HTTPS ENDPOINTS (Automatic SSL & DDoS Protection):"
               echo "👉 🔭 Astronomy Shop Web Store: https://astronomy.${ZONE_NAME}"
-              echo "👉 📊 Grafana SRE SLO Panel:    https://grafana.${ZONE_NAME}"
-              echo "🔑 Grafana Username: admin | Password: BilgincIT454"
+              if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
+                echo "👉 📊 Grafana SRE SLO Panel:    https://grafana.${ZONE_NAME}"
+                echo "   🔑 Grafana Username: admin | Password: BilgincIT454"
+              else
+                echo "👉 📊 External Grafana Panel:   ${{ inputs.external_grafana_url }}"
+              fi
+              if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
+                echo "👉 🛡️ SonarQube Security Panel: https://sonar.${ZONE_NAME}"
+                echo "   🔑 SonarQube Username: admin | Password: admin"
+              fi
               echo "================================================================================"
               echo ""
             fi
@@ -192,8 +232,16 @@ jobs:
           echo "================================================================================"
           echo "🌐 DIRECT AWS LOAD BALANCER ENDPOINTS (For Manual DNS / No-Cloudflare Mode):"
           echo "👉 🔭 Astronomy Shop Gateway: http://${FRONTEND_URL}:8080"
-          echo "👉 📊 Grafana SRE Dashboard:  http://${GRAFANA_URL}:3000"
-          echo "🔑 Grafana Username: admin | Password: BilgincIT454"
+          if [ "${{ inputs.deploy_incluster_grafana }}" != "false" ]; then
+            echo "👉 📊 In-Cluster Grafana SRE: http://${GRAFANA_URL}:3000"
+            echo "   🔑 Grafana Username: admin | Password: BilgincIT454"
+          else
+            echo "👉 📊 External Grafana URL:   ${{ inputs.external_grafana_url }}"
+          fi
+          if [ "${{ inputs.deploy_sonarqube }}" == "true" ]; then
+            echo "👉 🛡️ In-Cluster SonarQube:   http://${FRONTEND_URL}:9000"
+            echo "   🔑 SonarQube Username: admin | Password: admin"
+          fi
           echo "================================================================================"
           echo ""
 
