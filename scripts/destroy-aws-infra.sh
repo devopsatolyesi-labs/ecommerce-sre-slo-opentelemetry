@@ -25,8 +25,16 @@ if command -v kubectl >/dev/null 2>&1; then
     kubectl delete -f "${SCRIPT_DIR}/../sre-slo/" 2>/dev/null || true
 fi
 
+# Clean ACM certificates created for the domain
+if command -v aws >/dev/null 2>&1; then
+    log_info "Cleaning up any test ACM certificates in us-east-1..."
+    for cert in $(aws acm list-certificates --region us-east-1 --query 'CertificateSummaryList[*].CertificateArn' --output text 2>/dev/null || true); do
+        aws acm delete-certificate --certificate-arn "$cert" --region us-east-1 2>/dev/null || true
+    done
+fi
+
 cd "${TERRAFORM_DIR}"
 log_info "Running terraform destroy for environment: ${ENV}..."
-terraform destroy -auto-approve -var-file="${TFVARS_FILE}"
+terraform destroy -auto-approve -var-file="${TFVARS_FILE}" -var="enable_acm_ssl=false"
 
-log_success "Environment ${ENV} infrastructure destroyed successfully."
+log_success "Environment ${ENV} infrastructure destroyed successfully ($0 AWS Cost)."

@@ -19,7 +19,7 @@ data "cloudflare_zone" "this" {
 }
 
 locals {
-  zone_name = length(data.cloudflare_zone.this) > 0 ? data.cloudflare_zone.this[0].name : var.domain_name
+  zone_name   = length(data.cloudflare_zone.this) > 0 ? data.cloudflare_zone.this[0].name : var.domain_name
   target_host = var.alb_dns_name != "" ? var.alb_dns_name : "placeholder.amazonaws.com"
 }
 
