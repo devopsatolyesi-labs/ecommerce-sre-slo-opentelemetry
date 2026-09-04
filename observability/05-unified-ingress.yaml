@@ -1,8 +1,9 @@
 # ==============================================================================
 # Unified SRE Gateway & Ingress (Single AWS Load Balancer Architecture)
-# Listens on Standard Port 80 / 443 and routes via Gateway API / Ingress rules:
+# Listens on Standard Port 80 / 443 (Dual HTTP & Full SSL/TLS Support)
+# Routes via Gateway API / Ingress rules:
 #   - astronomy.devopsatolyesi.com / default  -> frontend-proxy.astronomy-shop (8080)
-#   - grafana.devopsatolyesi.com   / /grafana -> grafana.monitoring (3000)
+#   - grafana.devopsatolyesi.com   / /grafana -> grafana.monitoring (80)
 #   - sonar.devopsatolyesi.com     / /sonar   -> sonarqube.sonarqube (9000)
 # ==============================================================================
 
@@ -10,6 +11,16 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: gateway
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gateway-tls-certs
+  namespace: gateway
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUQrRENDQXVDZ0F3SUJBZ0lVUkJpRCtGRWFnLzl0UzJiYzNCL3g3dExSMXZvd0RRWUpLb1pJaHZjTkFRRUwKQlFBd1JURWRNQnNHQTFVRUF3d1VLaTVrWlhadmNITmhkRzlzZVdWemFTNWpiMjB4RnpBVkJnTlZCQW9NRGtSbApkazl3YzBGMGIyeDVaWE5wTVFzd0NRWURWUVFHRXdKVVVqQWVGdzB5TmpBNU1EUXhOekl5TlRCYUZ3MHpOakE1Ck1ERXhOekl5TlRCYU1FVXhIVEFiQmdOVkJBTU1GQ291WkdWMmIzQnpZWFJ2YkhsbGMya3VZMjl0TVJjd0ZRWUQKVlFRS0RBNUVaWFpQY0hOQmRHOXNlV1Z6YVRFTE1Ba0dBMVVFQmhNQ1ZGSXdnZ0VpTUEwR0NTcUdTSWIzRFFFQgpBUVVBQTRJQkR3QXdnZ0VLQW9JQkFRQ2ZsSlRsZHNvTmoxUGtTUWdkMWFYVDhDOGNOeHcwR0kxZnhqSXBQNTM5ClNKcUNKUm00dUFKZk1mU1FiRGl3NmJJZjR3THYxMDg2MFVaVFVRanpUZlVxSzZhYnFYZVV0clBMeUJubEtHOG8KVmNkeENQbkQ3TFV4RXp3Tjk5Snc4dDRGM2RudndzMXZQVU1CSWNEcUw1Q3liV2psQWdseXlaTHJsTHkxZU9MdAp0WkZEcnBCYjdrNVQ1SEV0eXQyUUZ3K1BYVXRmMkpiRlQzM2h4L1Z5d3VKZnRqL1VMTTZzak4zeTBjU2s4dE5ICkxydVhnb05kSW1laDZoTUJlUHVrL0FNaVovYllzNk1IL2ZqcG9GTEdObHgyeUhIRDZyQS9BVHZVdHd5UEpjWVIKNU5uR21QOFV4cEVmeG1CWXNrNjlxSFpmQy9GSnhXcTJqOFB4dWxRbWFYVFhBZ01CQUFHamdkOHdnZHd3SFFZRApWUjBPQkJZRUZJcFpjZG1Bd2xTM3pWQkk4RHgxUU1pM0Z6dytNQjhHQTFVZEl3UVlNQmFBRklwWmNkbUF3bFMzCnpWQkk4RHgxUU1pM0Z6dytNQThHQTFVZEV3RUIvd1FGTUFNQkFmOHdnWWdHQTFVZEVRU0JnREIrZ2hRcUxtUmwKZG05d2MyRjBiMng1WlhOcExtTnZiWUlTWkdWMmIzQnpZWFJ2YkhsbGMya3VZMjl0Z2h4aGMzUnliMjV2YlhrdQpaR1YyYjNCellYUnZiSGxsYzJrdVkyOXRnaHBuY21GbVlXNWhMbVJsZG05d2MyRjBiMng1WlhOcExtTnZiWUlZCmMyOXVZWEl1WkdWMmIzQnpZWFJ2YkhsbGMya3VZMjl0TUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBdFpkcGgKU0dHQzlaU2NpMU9mR1R2YVhmOTF1TGJrWU4wbU5zR3BmVUtBc1FQZUE3UGxoK0ZMUm5qMW1pVWUvODdrQUtmTgp1dlhpWE1JdkwvNlNPclJZTzUrcERRRUFZWnorMmp2RVhPQzVXRzZ2QkJsOW5kVDZQV1Z5L1BnQTlDVkNMUGl5CjdHWHROU1d3OGlIcmVjUEd5bWhzZ1V0dDYrYlFpZHJuV1llR0hVUi9NQzYzbm9ISkdmaHNjTkIrL1FzOExIbkUKc0w4V2xZTjdJVkJQY0VFVWtUZFF3VnZ6Zjd2b3d0T1pXU0R6VjFqSVRPQjEwdmdPajl5UGNhNXlKdkNrZ05qcQpnWUxrMkdsNkZQa3g1MHBwOWdzQzB2NU9JWEp1Njk2NEsvQmNhVmhEeVd3SWJjQk5QOURuaTFXQ2Y4OXNmMjl1CkxNZUg4L3RQWlgvY0dCWWkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQ2ZsSlRsZHNvTmoxUGsKU1FnZDFhWFQ4QzhjTnh3MEdJMWZ4aklwUDUzOVNKcUNKUm00dUFKZk1mU1FiRGl3NmJJZjR3THYxMDg2MFVaVApVUWp6VGZVcUs2YWJxWGVVdHJQTHlCbmxLRzhvVmNkeENQbkQ3TFV4RXp3Tjk5Snc4dDRGM2RudndzMXZQVU1CCkljRHFMNUN5YldqbEFnbHl5WkxybEx5MWVPTHR0WkZEcnBCYjdrNVQ1SEV0eXQyUUZ3K1BYVXRmMkpiRlQzM2gKeC9WeXd1SmZ0ai9VTE02c2pOM3kwY1NrOHROSExydVhnb05kSW1laDZoTUJlUHVrL0FNaVovYllzNk1IL2ZqcApvRkxHTmx4MnlISEQ2ckEvQVR2VXR3eVBKY1lSNU5uR21QOFV4cEVmeG1CWXNrNjlxSFpmQy9GSnhXcTJqOFB4CnVsUW1hWFRYQWdNQkFBRUNnZ0VBU3p6dmNyeXVDUFNobGdsRTFXUXN1aDhNNXgyb28zdEw5SExxcFg0RURDNFcKQXZSaEN6RmVsT2xscUU0TjhJTk9ZekJSNnlpMWgwS3lDSWcxVXhsWFZObWR4TmlDczgvc04xRVJ2SFJ5N0M1OQpTUEwxWjRXTDdDWm9jeUY3eTVzR1NQZlBUL2FsaXlQMEdtMkNtaWR3N2w4ZFRKUElScUY1THE5Q3hjRElKVkJ0CnJCbk9KT1VidFBKbGUyMHl2UngwbFAydjFWOEFxd3FtYzdOeTdEUFkxNVlaME5vZkE3clIzSmdhenRWVzAzMHEKb1VRQ1RHcDJZYXQrVGo0Mjc1b01FMFJidmN4NmNQdzlkcHVpVkFMWFRmckc0bVJoSjRFRDF1K0xLNE4rWklPNApldU1NMHJYN2paamJ5Lzh1SUFDdnUxQ2wySjVJUmJWL1NUREE1SDNhNlFLQmdRRFkwWUtGM2ovdFdLSjRVcjVnClZVV2dhVmZxVEIzd2VzYVR5TWtlZ3MzS3lCb1c0RU9Xb1ZkZDBIR3ZSNDg4dUFFeWtvMm1RMGo3ekFpbGdjdEMKald6MXBoblF0emlFWVBSV1FZT2hJZEszTDJhQW90WTJtQW1XaHpKVnRMUFhzTWJ4ZUV2WmJkL2ZUZjlEd2VkQwpQYUhQVGs0VDkvbjdka1MwK1hBS3hqdnNmUUtCZ1FDOGF4NFVJUUs5bDJXazNQdGF0QTllRmZ5NUI5L2gzbDdwCjFHRWkrd0RYQ2kwZXk3SWtGaGpRRUttQ3RpVkhiaHk5alNRWGxPakVUMzFjYXNta1pjRFpPcWFnQUsvVjUrVk4KT3hBM2x2RHgxWkh3T1lrSWZOSGpTc0dkNmpCL0hvZGtrWU45dlp5eTFXMldudkFFQ0FCOW41OWtDRWZBdGJ4ZApicFY3S3JkcTR3S0JnQlpoZ2hTcGZYWFZtV2ZNT3NTYzZNUUhPOEQrdkhSdmFBSW5Uc05zZ3l1MGZpVHdYMm0wCkc5MmVQNjMxT0E3dmU0Z3A0cDlRQUwrbEx4dE9pNW5DR1lZOThCcEFYNEFpdGZZVmF5MzkzTTkyQUNHMUxXR1QKVGlJUXNKeHlPOEkvQ0RveXpibVRBdkg5RGlXRFpZakw3ZUVGVnovdWNBcUtDY3VZbC8wMHUwak5Bb0dCQUlYZgpCY3YvZUZjRWpxK0lZdjZiR0tBY3R5Y3dOUjNpUlVXV0pENGFZUXBvckk1STVCVkhyZkdISlNrK0NWYXJJYmg3CjQ3enRqRVNPeGQ4MzhIVGg1eGR3MkpxdVlrQjFOektjV0hWbXhXTE4vNWJUQ2s0QmdZOGd1bGhjNElBeFRMbGoKdWkxSTMyRWd5M0JORlBPSVMvRDF6T1hpRERrYjV1M3JlRUcrby90SkFvR0FDaVdsd0FuYzFNRGJ0VFRrdGFiTgpoKzBibUZFZWZ0SGVpZE9acXEvNERsUWdDbTlDLzBPaU1RZDRRKzB6NXpSQlM4MWtsNUFDSXdaMHhSc1hZaFBYCklIWUFMZ0V6Q0F5dDd6RXFmVXJjMHU0OThkOUVMbCtJZWU1UlU1RVNtK0hUVUQ2OERlUTBHb3BoQ1F2bzVmTVUKZWxXT2ozTEFGRkE2U1d3RzB3UnBydUU9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -28,9 +39,17 @@ data:
 
         resolver 172.20.0.10 valid=10s ipv6=off;
 
+        # Shared SSL Configuration
+        ssl_certificate /etc/nginx/ssl/tls.crt;
+        ssl_certificate_key /etc/nginx/ssl/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+        ssl_prefer_server_ciphers on;
+
         # Virtual Host: Grafana (Host-based routing)
         server {
             listen 80;
+            listen 443 ssl;
             server_name grafana.* grafana;
 
             location / {
@@ -49,6 +68,7 @@ data:
         # Virtual Host: SonarQube (Host-based routing)
         server {
             listen 80;
+            listen 443 ssl;
             server_name sonar.* sonar;
 
             location / {
@@ -64,6 +84,7 @@ data:
         # Primary Virtual Host: Astronomy Shop Storefront (Default)
         server {
             listen 80 default_server;
+            listen 443 ssl default_server;
             server_name _;
 
             location /grafana/ {
@@ -123,10 +144,15 @@ spec:
           ports:
             - containerPort: 80
               name: http
+            - containerPort: 443
+              name: https
           volumeMounts:
             - name: config
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
+            - name: tls
+              mountPath: /etc/nginx/ssl
+              readOnly: true
           resources:
             requests:
               cpu: "50m"
@@ -138,6 +164,9 @@ spec:
         - name: config
           configMap:
             name: gateway-proxy-config
+        - name: tls
+          secret:
+            secretName: gateway-tls-certs
 ---
 apiVersion: v1
 kind: Service
@@ -155,3 +184,8 @@ spec:
       port: 80
       targetPort: 80
       protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 443
+      protocol: TCP
+
