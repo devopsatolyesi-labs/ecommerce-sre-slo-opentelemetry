@@ -47,14 +47,16 @@ resource "cloudflare_record" "acm_validation" {
     ]) : dvo.name => dvo
   } : {}
 
-  zone_id = var.cloudflare_zone_id
-  name    = each.value.name
-  value   = each.value.record
-  type    = each.value.type
-  proxied = false
-  ttl     = 60
-  comment = "AWS ACM DNS Validation"
+  zone_id         = var.cloudflare_zone_id
+  name            = each.value.name
+  value           = each.value.record
+  type            = each.value.type
+  proxied         = false
+  ttl             = 60
+  allow_overwrite = true
+  comment         = "AWS ACM DNS Validation"
 }
+
 
 
 # 3. ACM Certificate Validation Waiter
