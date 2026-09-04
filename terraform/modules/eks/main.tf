@@ -4,8 +4,8 @@ resource "aws_iam_role" "cluster" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "eks.amazonaws.com" }
     }]
   })
@@ -27,6 +27,11 @@ resource "aws_eks_cluster" "this" {
     endpoint_public_access  = true
   }
 
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   tags = {
     Environment = var.environment
   }
@@ -40,8 +45,8 @@ resource "aws_iam_role" "node" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })

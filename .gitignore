@@ -41,6 +41,20 @@ composer.lock
 *.apk
 /.lycheecache
 
+# Terraform local state and binaries
+**/.terraform/*
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
 # Ignore copied/generated protobuf files
 /src/accounting/src/protos/
 /src/cart/src/protos/
