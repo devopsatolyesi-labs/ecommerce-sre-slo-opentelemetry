@@ -63,3 +63,45 @@ variable "enable_ecs" {
   type        = bool
   default     = false
 }
+
+# ==============================================================================
+# Cloudflare DNS & Automated SSL Configuration
+# ==============================================================================
+
+variable "enable_cloudflare" {
+  description = "Flag to enable automated Cloudflare DNS records and SSL proxy"
+  type        = bool
+  default     = false
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API Token with Zone.DNS edit permissions"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "cloudflare_zone_id" {
+  description = "Cloudflare Zone ID for target domain"
+  type        = string
+  default     = ""
+}
+
+variable "domain_name" {
+  description = "Domain name hosted on Cloudflare (e.g. devopsatolyesi.com)"
+  type        = string
+  default     = ""
+}
+
+variable "subdomain_prefix" {
+  description = "Subdomain prefix for the deployment"
+  type        = string
+  default     = "astronomy"
+}
+
+variable "alb_dns_name" {
+  description = "AWS Application Load Balancer DNS Hostname to map CNAME to"
+  type        = string
+  default     = ""
+}
+

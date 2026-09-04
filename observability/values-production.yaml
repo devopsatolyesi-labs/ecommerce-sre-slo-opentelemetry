@@ -1,0 +1,51 @@
+# ==============================================================================
+# OpenTelemetry Astronomy Shop - Production SRE Helm Values
+# Disables bundled duplicate observability stacks and connects to dedicated LGTM stack
+# ==============================================================================
+
+# Disable bundled duplicate observability components
+prometheus:
+  enabled: false
+
+grafana:
+  enabled: false
+
+jaeger:
+  enabled: false
+
+opentelemetry-collector:
+  enabled: false
+
+# Global environment configuration with robust service naming and OTLP gRPC endpoint
+default:
+  env:
+    - name: OTEL_SERVICE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.labels['app.kubernetes.io/component']
+    - name: OTEL_COLLECTOR_NAME
+      value: otel-collector
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "service.version=3.0.0,deployment.environment=dev"
+
+# Frontend and Envoy Gateway configuration
+frontend:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 8080
+
+frontendProxy:
+  enabled: true
+  service:
+    type: LoadBalancer
+    port: 8080
+
+imageProvider:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 8081

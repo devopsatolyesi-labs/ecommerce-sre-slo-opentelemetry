@@ -27,55 +27,13 @@ Bu proje; Cloud Native Computing Foundation (CNCF) resmi **OpenTelemetry Astrono
 
 Altyapı; AWS üzerinde çift Kullanılabilirlik Alanında (Multi-AZ) konuşlanan VPC, genel ve özel alt ağlar, tekil NAT Gateway (maliyet optimizasyonu), Kubernetes v1.32 EKS Kümesi ve EC2 Managed Node Group bileşenlerinden oluşur.
 
-```mermaid
-flowchart TD
-    subgraph CLIENT_LAYER [Kullanıcı & Yük Üretici]
-        USERS[Müşteri / Tarayıcı]
-        LOCUST[Locust Load Generator Pod]
-    end
+![AWS EKS & SRE Telemetry Architecture](docs/images/aws_architecture_diagram.jpg)
 
-    subgraph AWS_VPC [AWS VPC - 10.x.0.0/16]
-        IGW[Internet Gateway]
-        ALB[AWS Application Load Balancer]
-        
-        subgraph EKS_CLUSTER [AWS EKS Cluster v1.32]
-            subgraph APP_NS [Namespace: astronomy-shop]
-                FRONTEND[frontend-web]
-                CHECKOUT[checkoutservice]
-                CART[cartservice]
-                PAYMENT[paymentservice]
-                CATALOG[productcatalogservice]
-                SHIPPING[shippingservice]
-                FLAGD[flagd Feature Flag Chaos]
-            end
-
-            subgraph OTEL_NS [Namespace: opentelemetry]
-                OTEL_COL[OpenTelemetry Collector\nOTLP gRPC :4317 / HTTP :4318]
-            end
-
-            subgraph MON_NS [Namespace: monitoring]
-                PROM[(Prometheus TSDB StatefulSet\nSLO & Burn Rate Rules)]
-                TEMPO[(Grafana Tempo StatefulSet\nDistributed Tracing TSDB)]
-                GRAFANA[Grafana v11 Dashboard\nSLO & Error Budget Panelleri]
-            end
-        end
-    end
-
-    subgraph AWS_STORAGE [Durum & Depolama]
-        S3[(Amazon S3 State Bucket\nastronomy-tfstate-...)]
-    end
-
-    USERS -->|HTTP| ALB --> FRONTEND
-    LOCUST -->|Sürekli Trafik| FRONTEND
-    FLAGD -.->|Kaos / Hata Enjeksiyonu| CHECKOUT
-
-    FRONTEND & CHECKOUT & CART & PAYMENT & CATALOG & SHIPPING -->|OTLP Traces & Metrics| OTEL_COL
-    OTEL_COL -->|Prometheus Exporter :8889| PROM
-    OTEL_COL -->|OTLP gRPC Exporter| TEMPO
-
-    GRAFANA -->|PromQL| PROM
-    GRAFANA -->|TraceQL| TEMPO
-```
+### Mimari Katmanlar ve Trafik Akışı:
+1. **Giriş & Yönlendirme Katmanı (Ingress & DNS):** İsteğe bağlı Cloudflare DNS & SSL proxy katmanı (`astronomy.domain.com` ve `grafana.domain.com`) üzerinden gelen istekler, AWS Multi-AZ genel alt ağlarındaki tekil Ingress Gateway (ALB) tarafından karşılanır.
+2. **Uygulama Katmanı (EKS Private Subnets):** Ingress Gateway gelen trafiği `astronomy-shop` namespace'i altındaki `frontend-proxy` (Envoy) ve Next.js mikroservislerine yönlendirir. Ürün görselleri `image-provider` (Nginx) tarafından sunulur.
+3. **Telemetri & Gözlemlenebilirlik (LGTM Stack):** Tüm mikroservisler OpenTelemetry SDK ile enstrümante edilmiştir. Metrikler, loglar ve dağıtık izler (traces) `opentelemetry` namespace'indeki OTel Collector'a iletilir; oradan Prometheus TSDB ve Grafana Tempo'ya dağıtılır.
+4. **SRE & SLO Motoru:** Prometheus TSDB üzerinde tanımlı çok pencereli tüketim kuralları hata bütçesini sürekli denetler ve Grafana SLO Dashboard'larında görselleştirilir.
 
 ---
 
@@ -85,12 +43,18 @@ Bu platform, Google SRE standartlarına uygun iki temel Hizmet Seviyesi Hedefi (
 
 ### 1. Erişilebilirlik Hedefi (Availability SLO: %99.9)
 * **Hizmet Seviyesi Göstergesi (SLI):** Başarılı HTTP isteklerinin toplam isteklere oranıdır.
-  $$\text{Availability SLI} = 1 - \frac{\sum \text{rate}(http\_requests\_total\{status=\sim"5.."\}[\text{30d}])}{\sum \text{rate}(http\_requests\_total[\text{30d}])}$$
+```promql
+# Availability SLI (Son 30 Günlük Başarı Oranı)
+1 - (sum(rate(http_requests_total{status=~"5.."}[30d])) / sum(rate(http_requests_total[30d])))
+```
 * **Hata Bütçesi (Error Budget):** Toplam isteklerin azami `%0.1`'i (1.000 işlemde 1 hata) tolere edilir.
 
 ### 2. Gecikme Hedefi (Latency SLO: p95 < 500ms)
 * **SLI:** Checkout ve kritik servis çağrılarının `%95`'inin 500 milisaniyenin altında tamamlanma oranıdır.
-  $$\text{Latency SLI} = \text{histogram\_quantile}(0.95, \sum \text{rate}(http\_request\_duration\_seconds\_bucket\{job="checkoutservice"\}[5m]))$$
+```promql
+# Latency SLI (p95 Yanıt Süresi < 500ms)
+histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="checkoutservice"}[5m])) by (le))
+```
 
 ### 3. Çok Pencereli Tüketim Hızı Alarmları (Multi-Window Multi-Burn-Rate)
 Geleneksel eşik alarmları yerine, hata bütçesinin tükenme hızına göre akıllı iki kademeli alarm mekanizması çalışır:

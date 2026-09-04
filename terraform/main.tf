@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.50.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.35.0"
+    }
   }
 }
 
@@ -24,6 +28,10 @@ provider "aws" {
       Owner       = "DevOps-Atolyesi"
     }
   }
+}
+
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token != "" ? var.cloudflare_api_token : null
 }
 
 # 1. Reusable VPC Module (Single NAT Gateway for optimized cost & limits)
@@ -57,4 +65,15 @@ module "ecs" {
   environment  = var.environment
   vpc_id       = module.vpc.vpc_id
   subnet_ids   = module.vpc.private_subnets
+}
+
+# 4. Optional Cloudflare DNS & Automated SSL Module
+module "cloudflare" {
+  source               = "./modules/cloudflare"
+  enable_cloudflare    = var.enable_cloudflare
+  cloudflare_api_token = var.cloudflare_api_token
+  cloudflare_zone_id   = var.cloudflare_zone_id
+  domain_name          = var.domain_name
+  subdomain_prefix     = var.subdomain_prefix
+  alb_dns_name         = var.alb_dns_name
 }
