@@ -61,27 +61,26 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/prometheus
+            - name: rules-volume
+              mountPath: /etc/prometheus/rules
             - name: prometheus-data
               mountPath: /prometheus
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "100m"
+              memory: "256Mi"
             limits:
-              cpu: "1000m"
-              memory: "1.5Gi"
+              cpu: "500m"
+              memory: "512Mi"
       volumes:
         - name: config-volume
           configMap:
             name: prometheus-server-config
-  volumeClaimTemplates:
-    - metadata:
-        name: prometheus-data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 15Gi
+        - name: rules-volume
+          configMap:
+            name: prometheus-slo-rules
+        - name: prometheus-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

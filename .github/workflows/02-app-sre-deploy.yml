@@ -78,16 +78,21 @@ jobs:
       - name: Deploy SRE Observability Stack (OpenTelemetry Collector, Prometheus, Tempo, Grafana)
         if: (inputs.action == 'deploy' || github.event_name == 'pull_request') && inputs.deploy_sre_stack != false
         run: |
+          echo "0/4 Ensuring Kubernetes Namespaces exist..."
+          kubectl create namespace opentelemetry --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
+
           echo "1/4 Deploying OpenTelemetry Collector..."
           kubectl apply -f observability/otel-collector-config.yaml
           kubectl apply -f observability/04-otel-collector-deployment.yaml
           kubectl rollout status deployment/otel-collector -n opentelemetry --timeout=180s || true
 
           echo "2/4 Deploying Prometheus TSDB, Grafana Tempo, and Grafana SLO Dashboards..."
+          kubectl apply -f sre-slo/01-slo-definitions.yaml
           kubectl apply -f observability/01-prometheus-statefulset.yaml
           kubectl apply -f observability/02-tempo-statefulset.yaml
           kubectl apply -f observability/03-grafana-deployment.yaml
-          kubectl apply -f sre-slo/01-slo-definitions.yaml
 
           # Expose Grafana via LoadBalancer for external access
           kubectl -n monitoring patch svc grafana -p '{"spec": {"type": "LoadBalancer"}}' || true
@@ -105,12 +110,18 @@ jobs:
           helm repo update
           helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
             --namespace astronomy-shop --create-namespace \
+            --set prometheus.enabled=false \
+            --set grafana.enabled=false \
+            --set jaeger.enabled=false \
+            --set opentelemetry-collector.enabled=false \
             --set default.env[0].name=OTEL_EXPORTER_OTLP_ENDPOINT \
             --set default.env[0].value="http://otel-collector.opentelemetry.svc.cluster.local:4317" \
-            --timeout 8m || true
+            --timeout 10m || true
 
           # Expose Frontend Web via LoadBalancer
           kubectl -n astronomy-shop patch svc astronomy-shop-frontend -p '{"spec": {"type": "LoadBalancer"}}' || true
+          kubectl -n astronomy-shop patch svc astronomy-shop-frontendproxy -p '{"spec": {"type": "LoadBalancer"}}' || true
+          kubectl -n astronomy-shop patch svc astronomy-shop-frontend-proxy -p '{"spec": {"type": "LoadBalancer"}}' || true
           sleep 10
           kubectl -n astronomy-shop get all
 
@@ -118,11 +129,17 @@ jobs:
         if: inputs.action == 'deploy' || inputs.action == 'validate'
         run: |
           echo "4/4 Fetching AWS Load Balancer DNS Hostnames..."
-          sleep 15
-          kubectl get svc -A -o wide
+          for i in {1..30}; do
+            FRONTEND_URL=$(kubectl get svc -n astronomy-shop -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$FRONTEND_URL" ] && [ -n "$GRAFANA_URL" ]; then
+              break
+            fi
+            echo "Waiting for Load Balancers to provision DNS hostnames... ($i/30)"
+            sleep 5
+          done
 
-          FRONTEND_URL=$(kubectl get svc -n astronomy-shop astronomy-shop-frontend -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
-          GRAFANA_URL=$(kubectl get svc -n monitoring grafana -o jsonpath="{.status.loadBalancer.ingress[0].hostname}" 2>/dev/null || echo "")
+          kubectl get svc -A -o wide
 
           echo ""
           echo "================================================================================"

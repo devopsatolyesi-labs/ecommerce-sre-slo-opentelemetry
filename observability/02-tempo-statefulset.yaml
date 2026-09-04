@@ -74,14 +74,8 @@ spec:
         - name: config
           configMap:
             name: tempo-config
-  volumeClaimTemplates:
-    - metadata:
-        name: tempo-data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
+        - name: tempo-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
