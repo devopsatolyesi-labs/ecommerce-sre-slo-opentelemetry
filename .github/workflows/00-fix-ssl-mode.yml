@@ -1,0 +1,14 @@
+name: "00 - Fix Cloudflare SSL Mode"
+on:
+  workflow_dispatch:
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set Cloudflare SSL to Flexible
+        run: |
+          curl -s -X PATCH \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/settings/ssl" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"value":"flexible"}' | jq '{success:.success, result:.result}'
