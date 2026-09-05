@@ -200,6 +200,14 @@ jobs:
           kubectl delete certificate -n monitoring grafana-tls --ignore-not-found=true || true
           kubectl delete certificate -n sonarqube sonarqube-tls --ignore-not-found=true || true
 
+          # Reset unready sre-platform-tls to clear failed ACME orders from previous sonar domain
+          READY_STATUS=$(kubectl get certificate -n traefik sre-platform-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+          if [ "$READY_STATUS" != "True" ]; then
+            echo "Resetting unready sre-platform-tls certificate and stale ACME orders..."
+            kubectl delete certificate -n traefik sre-platform-tls --ignore-not-found=true || true
+            kubectl delete certificaterequest,order,challenge -n traefik --all --ignore-not-found=true || true
+          fi
+
           kubectl apply -f observability/05-unified-ingress.yaml
           kubectl get gateway,httproute -A
 
@@ -262,9 +270,11 @@ jobs:
             [ "${{ inputs.deploy_sonarqube }}" = "true" ]           && upsert_cname "sonar"   "${GATEWAY_URL}"
           fi
 
-          echo "Waiting up to 60s for Let's Encrypt Certificates to be issued..."
-          kubectl wait --for=condition=Ready certificate --all -A --timeout=60s || true
+          echo "Waiting up to 120s for Let's Encrypt Certificates to be issued..."
+          kubectl wait --for=condition=Ready certificate/sre-platform-tls -n traefik --timeout=120s || true
           kubectl get certificate -A || true
+          kubectl describe certificate -n traefik sre-platform-tls || true
+          kubectl describe challenge -A || true
 
       - name: "Print Final Endpoints"
         if: inputs.action == 'deploy' || inputs.action == 'validate'
