@@ -195,10 +195,11 @@ jobs:
       - name: "[3/4] Deploy Kubernetes Gateway & HTTPRoutes"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Applying Gateway API Gateway, HTTPRoutes, and Let's Encrypt ClusterIssuer..."
-          kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create namespace sonarqube --dry-run=client -o yaml | kubectl apply -f -
+          # Clean up any legacy or stale individual certificates from older setups
+          kubectl delete certificate -n astronomy-shop astronomy-shop-tls --ignore-not-found=true || true
+          kubectl delete certificate -n monitoring grafana-tls --ignore-not-found=true || true
+          kubectl delete certificate -n sonarqube sonarqube-tls --ignore-not-found=true || true
+
           kubectl apply -f observability/05-unified-ingress.yaml
           kubectl get gateway,httproute -A
 

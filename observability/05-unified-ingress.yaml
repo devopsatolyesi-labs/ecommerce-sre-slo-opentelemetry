@@ -35,7 +35,6 @@ spec:
   dnsNames:
     - "astronomy.devopsatolyesi.com"
     - "grafana.devopsatolyesi.com"
-    - "sonar.devopsatolyesi.com"
 ---
 # 1. HTTPRoute for OpenTelemetry Astronomy Shop
 apiVersion: gateway.networking.k8s.io/v1
@@ -83,30 +82,7 @@ spec:
         - name: grafana
           port: 80
 ---
-# 3. HTTPRoute for SonarQube Code Quality Server
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: sonarqube-route
-  namespace: sonarqube
-  labels:
-    app.kubernetes.io/name: sonarqube
-spec:
-  parentRefs:
-    - name: traefik-gateway
-      namespace: traefik
-  hostnames:
-    - "sonar.devopsatolyesi.com"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - name: sonarqube
-          port: 9000
----
-# 4. Direct AWS Load Balancer Hostname Route (Fallback)
+# 3. Direct AWS Load Balancer Hostname Route (Fallback)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
