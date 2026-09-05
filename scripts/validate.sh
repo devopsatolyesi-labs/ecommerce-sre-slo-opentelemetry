@@ -91,6 +91,20 @@ else
     log_info "PrometheusRule CRD not found; rules loaded via ConfigMap."
 fi
 
+# 8. Test HTTP Connectivity (Port 80)
+log_info "Testing HTTP connectivity on Port 80 for Grafana & Astronomy Shop..."
+GATEWAY_URL=$(kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+if [ -n "$GATEWAY_URL" ]; then
+    echo "Testing direct ALB Host routing for Grafana:"
+    curl -sIL -m 10 "http://${GATEWAY_URL}" -H "Host: grafana.devopsatolyesi.com" | head -n 8 || true
+    echo "Testing direct ALB Host routing for Astronomy Shop:"
+    curl -sIL -m 10 "http://${GATEWAY_URL}" -H "Host: astronomy.devopsatolyesi.com" | head -n 8 || true
+    echo "Testing DNS resolution for http://grafana.devopsatolyesi.com:"
+    curl -sIL -m 10 "http://grafana.devopsatolyesi.com" | head -n 8 || true
+    echo "Testing DNS resolution for http://astronomy.devopsatolyesi.com:"
+    curl -sIL -m 10 "http://astronomy.devopsatolyesi.com" | head -n 8 || true
+fi
+
 echo "================================================================================"
 log_success "All SRE, Ingress, and Observability components validated successfully!"
 echo "================================================================================"

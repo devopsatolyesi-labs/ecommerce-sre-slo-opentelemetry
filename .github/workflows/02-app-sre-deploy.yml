@@ -158,8 +158,9 @@ jobs:
       - name: "[1/4] Deploy Kubernetes Gateway API CRDs & Traefik v3 Controller"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Installing Kubernetes Gateway API v1.2.0 CRDs (including TLSRoute & BackendTLSPolicy required by Traefik v3)..."
-          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml
+          echo "Installing Kubernetes Gateway API v1.5.1 CRDs (standard + experimental)..."
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/experimental-install.yaml
           # Delete legacy unused sre-gateway if present
           kubectl delete gateway -n traefik sre-gateway --ignore-not-found=true || true
 

@@ -15,7 +15,7 @@ providers:
     enabled: true
   kubernetesGateway:
     enabled: true
-    experimentalChannel: false
+    experimentalChannel: true
 
 gatewayClass:
   enabled: true
