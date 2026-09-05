@@ -29,10 +29,11 @@ Altyapı; AWS üzerinde çift Kullanılabilirlik Alanında (Multi-AZ) konuşlana
 
 ![AWS EKS & SRE Telemetry Architecture](docs/images/aws_architecture_diagram.jpg)
 
-1. **Giriş & Yönlendirme Katmanı (Ingress, DNS & Let's Encrypt SSL):**
-   - **AWS Katmanı (Sıfır ACM):** AWS üzerinde ACM veya SSL terminasyonu yapılmaz; AWS Load Balancer sadece Port 80 ve Port 443 trafiğini Kubernetes Ingress-NGINX controller'a aktaran şeffaf bir köprüdür.
+1. **Giriş & Yönlendirme Katmanı (Kubernetes Gateway API v1 & Traefik v3):**
+   - **Modern Gateway API Standardı:** Klasik/eskimiş Ingress yerine resmi CNCF standardı olan **Kubernetes Gateway API** (`gateway.networking.k8s.io/v1`) ve **Traefik v3 Gateway Controller** kullanılır (`GatewayClass`, `Gateway`, `HTTPRoute`).
+   - **AWS Katmanı (Sıfır ACM / Şeffaf L4):** AWS üzerinde hiçbir ACM sertifikası veya SSL terminasyonu yapılmaz; tekil AWS Load Balancer sadece Port 80 ve Port 443 trafiğini Traefik Gateway Controller'a aktarır.
    - **Cloudflare Katmanı (Sadece DNS / proxied: false):** Cloudflare sadece DNS sağlayıcı olarak kullanılır (Gri Bulut / `proxied: false`). SSL/proxy modu kapalıdır; bu sayede Cloudflare proxy çakışmaları ve SSL döngüleri engellenir.
-   - **Kubernetes & Let's Encrypt Katmanı:** Küme içinde çalışan `cert-manager`, Let's Encrypt ACME HTTP-01 protokolü ile `astronomy.devopsatolyesi.com` ve `grafana.devopsatolyesi.com` için 100% otomatik ve ücretsiz geçerli SSL/TLS sertifikalarını üretir. TLS terminasyonu doğrudan Ingress-NGINX seviyesinde gerçekleşir.
+   - **Kubernetes & Let's Encrypt Katmanı:** Küme içinde çalışan `cert-manager` Gateway API entegrasyonu ile `astronomy.devopsatolyesi.com` ve `grafana.devopsatolyesi.com` için 100% otomatik ve ücretsiz geçerli Let's Encrypt SSL/TLS sertifikalarını üretir. TLS terminasyonu doğrudan Gateway seviyesinde gerçekleşir.
 2. **Uygulama Katmanı (EKS Private Subnets):** Ingress Gateway gelen trafiği `astronomy-shop` namespace'i altındaki `frontend-proxy` (Envoy) ve Next.js mikroservislerine yönlendirir. Ürün görselleri `image-provider` (Nginx) tarafından sunulur.
 3. **Telemetri & Gözlemlenebilirlik (LGTM Stack):** Tüm mikroservisler OpenTelemetry SDK ile enstrümante edilmiştir. Metrikler, loglar ve dağıtık izler (traces) `opentelemetry` namespace'indeki OTel Collector'a iletilir; oradan Prometheus TSDB ve Grafana Tempo'ya dağıtılır.
 4. **SRE & SLO Motoru:** Prometheus TSDB üzerinde tanımlı çok pencereli tüketim kuralları hata bütçesini sürekli denetler ve Grafana SLO Dashboard'larında görselleştirilir.
@@ -194,7 +195,7 @@ Sistem iki bağımsız ve kurumsal DevOps prensiplerine uygun iş akışından o
   1. OpenTelemetry Collector, Prometheus TSDB ve Grafana Tempo StatefulSet'lerini kurar.
   2. SRE SLO çok pencereli tüketim kurallarını ConfigMap olarak Prometheus'a bağlar.
   3. Astronomy Shop mikroservislerini `values-production.yaml` ile Helm üzerinden ayağa kaldırır.
-  4. Ingress-NGINX ve cert-manager'ı kurup Let's Encrypt `ClusterIssuer` (HTTP-01) ve Ingress kurallarını devreye alır.
+  4. Kubernetes Gateway API standardı (v1.2.0 CRDs) ve Traefik v3 Gateway Controller'ı kurup Let's Encrypt `ClusterIssuer` (HTTP-01) ve `HTTPRoute` kurallarını devreye alır.
   5. Cloudflare DNS CNAME kayıtlarını `proxied: false` (DNS-only) olarak açar; Let's Encrypt sertifikasını otomatik doğrular ve `https://astronomy.devopsatolyesi.com` adresini yeşil kilitli olarak yayına alır.
 
 ---

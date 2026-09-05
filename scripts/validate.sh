@@ -50,13 +50,13 @@ else
     log_fail "Grafana is not ready."
 fi
 
-# 5. Check Ingress-NGINX & cert-manager
-log_info "Verifying Ingress-NGINX Controller..."
-ingress_ready=$(kubectl get deployment ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
-if (( ingress_ready > 0 )); then
-    log_success "Ingress-NGINX Controller is active and ready."
+# 5. Check Traefik v3 Gateway Controller & cert-manager
+log_info "Verifying Traefik v3 Gateway Controller..."
+traefik_ready=$(kubectl get deployment traefik -n traefik -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+if (( traefik_ready > 0 )); then
+    log_success "Traefik v3 Gateway Controller is active and ready."
 else
-    log_fail "Ingress-NGINX Controller is not ready."
+    log_fail "Traefik v3 Gateway Controller is not ready."
 fi
 
 log_info "Verifying cert-manager webhook..."
@@ -67,9 +67,10 @@ else
     log_fail "cert-manager webhook is not ready."
 fi
 
-# 6. Check Ingress resources
-log_info "Verifying SRE Ingresses..."
-kubectl get ingress -A
+# 6. Check Kubernetes Gateway API resources
+log_info "Verifying Kubernetes Gateway & HTTPRoutes..."
+kubectl get gateway,httproute -A
+kubectl get certificate -A
 
 # 7. Check SLO PrometheusRule
 log_info "Verifying SRE SLO Alert Rules..."

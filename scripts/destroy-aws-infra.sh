@@ -22,7 +22,8 @@ if command -v kubectl >/dev/null 2>&1; then
     log_info "Uninstalling Astronomy Shop Helm release and observability stack if present..."
     helm uninstall astronomy-shop --namespace astronomy-shop 2>/dev/null || true
     kubectl delete -f "${SCRIPT_DIR}/../observability/05-unified-ingress.yaml" 2>/dev/null || true
-    helm uninstall ingress-nginx --namespace ingress-nginx 2>/dev/null || true
+    helm uninstall traefik --namespace traefik 2>/dev/null || true
+    kubectl delete namespace traefik --timeout=60s 2>/dev/null || true
     kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml 2>/dev/null || true
     kubectl delete -f "${SCRIPT_DIR}/../observability/" 2>/dev/null || true
     kubectl delete -f "${SCRIPT_DIR}/../sre-slo/" 2>/dev/null || true

@@ -155,23 +155,29 @@ jobs:
           sleep 5
           kubectl -n astronomy-shop get pods,svc
 
-      - name: "[1/4] Deploy Ingress-NGINX Controller (AWS Load Balancer)"
+      - name: "[1/4] Deploy Kubernetes Gateway API CRDs & Traefik v3 Controller"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Deploying Ingress-NGINX Controller on AWS EKS..."
-          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
+          echo "Installing Kubernetes Gateway API v1.2.0 standard CRDs..."
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
+          echo "Deploying Traefik v3 Kubernetes Gateway API Controller on AWS EKS..."
+          helm repo add traefik https://traefik.github.io/charts --force-update
           helm repo update
-          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx --create-namespace \
-            --set controller.service.type=LoadBalancer \
+          helm upgrade --install traefik traefik/traefik \
+            --namespace traefik --create-namespace \
+            --set providers.kubernetesGateway.enabled=true \
+            --set providers.kubernetesGateway.experimentalChannel=false \
+            --set gatewayClass.enabled=true \
+            --set service.type=LoadBalancer \
             --wait --timeout=300s
 
-          kubectl get svc -n ingress-nginx
+          kubectl get svc -n traefik
 
       - name: "[2/4] Deploy cert-manager (Let's Encrypt Automation Engine)"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Deploying cert-manager v1.16.2..."
+          echo "Deploying cert-manager v1.16.2 with Gateway API support..."
           kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
           echo "Waiting for cert-manager webhook to be ready..."
           kubectl wait --namespace cert-manager \
@@ -179,12 +185,12 @@ jobs:
             --selector=app.kubernetes.io/component=webhook \
             --timeout=180s
 
-      - name: "[3/4] Deploy SRE Ingresses & Let's Encrypt ClusterIssuer"
+      - name: "[3/4] Deploy Kubernetes Gateway & HTTPRoutes"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Applying ClusterIssuer and Ingress resources..."
+          echo "Applying Gateway API Gateway, HTTPRoutes, and Let's Encrypt ClusterIssuer..."
           kubectl apply -f observability/05-unified-ingress.yaml
-          kubectl get ingress -A
+          kubectl get gateway,httproute -A
 
       - name: "[4/4] Sync Cloudflare DNS Records (DNS-Only / proxied: false)"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
@@ -194,18 +200,18 @@ jobs:
         run: |
           DOMAIN="devopsatolyesi.com"
 
-          echo "Fetching AWS Load Balancer hostname from ingress-nginx..."
+          echo "Fetching AWS Load Balancer hostname from Traefik Gateway..."
           GATEWAY_URL=""
           for i in {1..40}; do
-            GATEWAY_URL=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            GATEWAY_URL=$(kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
             [ -n "$GATEWAY_URL" ] && break
-            echo "Waiting for LoadBalancer hostname... ($i/40)"
+            echo "Waiting for Traefik LoadBalancer hostname... ($i/40)"
             sleep 5
           done
 
           if [ -z "$GATEWAY_URL" ]; then
-            echo "Error: Ingress LoadBalancer did not get a hostname in time."
-            kubectl describe svc -n ingress-nginx ingress-nginx-controller
+            echo "Error: Traefik LoadBalancer did not get a hostname in time."
+            kubectl describe svc -n traefik traefik
             exit 1
           fi
           echo "AWS LoadBalancer Hostname: ${GATEWAY_URL}"
@@ -255,7 +261,8 @@ jobs:
           echo ""
           echo "================================================================================"
           DOMAIN="devopsatolyesi.com"
-          echo "🔒 SSL Status: Let's Encrypt Automated Ingress TLS (Active)"
+          echo "🚀 Routing Layer: Kubernetes Gateway API v1 (Traefik v3 Controller)"
+          echo "🔒 TLS Status: Let's Encrypt Automated Gateway TLS"
           echo "👉 🔭 Astronomy Shop:  https://astronomy.${DOMAIN}"
           echo "👉 📊 Grafana SRE:    https://grafana.${DOMAIN}"
           if [ -n "${GATEWAY_URL:-}" ]; then
@@ -277,10 +284,10 @@ jobs:
           helm uninstall astronomy-shop --namespace astronomy-shop 2>/dev/null || true
           kubectl delete namespace astronomy-shop --timeout=60s 2>/dev/null || true
 
-          echo "2/4 Deleting Ingress and Load Balancers..."
+          echo "2/4 Deleting Gateway API and Traefik Load Balancers..."
           kubectl delete -f observability/05-unified-ingress.yaml 2>/dev/null || true
-          helm uninstall ingress-nginx --namespace ingress-nginx 2>/dev/null || true
-          kubectl delete namespace ingress-nginx --timeout=60s 2>/dev/null || true
+          helm uninstall traefik --namespace traefik 2>/dev/null || true
+          kubectl delete namespace traefik --timeout=60s 2>/dev/null || true
 
           echo "3/4 Uninstalling cert-manager..."
           kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml 2>/dev/null || true
