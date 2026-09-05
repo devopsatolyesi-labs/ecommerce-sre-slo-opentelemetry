@@ -88,6 +88,11 @@ spec:
                   number: 80
 ---
 # 3. SonarQube Code Quality Ingress (Namespace: sonarqube)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sonarqube
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

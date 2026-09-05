@@ -107,6 +107,7 @@ jobs:
           kubectl create namespace opentelemetry --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
           kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace sonarqube --dry-run=client -o yaml | kubectl apply -f -
 
           echo "1/4 Deploying OpenTelemetry Collector..."
           kubectl apply -f observability/otel-collector-config.yaml
