@@ -158,8 +158,8 @@ jobs:
       - name: "[1/4] Deploy Kubernetes Gateway API CRDs & Traefik v3 Controller"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Installing Kubernetes Gateway API v1.2.0 standard CRDs..."
-          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+          echo "Installing Kubernetes Gateway API v1.2.0 CRDs (including TLSRoute & BackendTLSPolicy required by Traefik v3)..."
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml
           # Delete legacy unused sre-gateway if present
           kubectl delete gateway -n traefik sre-gateway --ignore-not-found=true || true
 
@@ -171,6 +171,8 @@ jobs:
             -f observability/traefik-values.yaml \
             --wait --timeout=300s
 
+          kubectl rollout restart deployment/traefik -n traefik
+          kubectl rollout status deployment/traefik -n traefik --timeout=120s
           kubectl get svc -n traefik
 
       - name: "[2/4] Deploy cert-manager (Let's Encrypt Automation Engine)"
