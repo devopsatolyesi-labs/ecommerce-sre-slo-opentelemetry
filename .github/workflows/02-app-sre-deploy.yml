@@ -182,9 +182,32 @@ jobs:
           kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
           kubectl apply -f observability/cert-manager-gateway-rbac.yaml
 
-          echo "Enabling Gateway API feature gate on cert-manager controller..."
-          kubectl patch deployment cert-manager -n cert-manager --type='json' \
-            -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--feature-gates=ExperimentalGatewayAPISupport=true"}]' || true
+          echo "Enabling Gateway API on cert-manager controller..."
+          kubectl patch deployment cert-manager -n cert-manager --type='strategic' -p '{
+            "spec": {
+              "template": {
+                "spec": {
+                  "containers": [
+                    {
+                      "name": "cert-manager-controller",
+                      "args": [
+                        "--v=2",
+                        "--cluster-resource-namespace=$(POD_NAMESPACE)",
+                        "--leader-election-namespace=kube-system",
+                        "--acme-http01-solver-image=quay.io/jetstack/cert-manager-acmesolver:v1.16.2",
+                        "--max-concurrent-challenges=60",
+                        "--feature-gates=ExperimentalGatewayAPISupport=true",
+                        "--enable-gateway-api"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }'
+
+          kubectl rollout restart deployment cert-manager -n cert-manager
+          kubectl rollout status deployment cert-manager -n cert-manager --timeout=120s
 
           echo "Waiting for cert-manager webhook to be ready..."
           kubectl wait --namespace cert-manager \
@@ -280,6 +303,7 @@ jobs:
           kubectl get certificate -A || true
           kubectl describe certificate -n traefik sre-platform-tls || true
           kubectl describe challenge -A || true
+          kubectl logs -n cert-manager deployment/cert-manager --tail=50 || true
 
       - name: "Print Final Endpoints"
         if: inputs.action == 'deploy' || inputs.action == 'validate'

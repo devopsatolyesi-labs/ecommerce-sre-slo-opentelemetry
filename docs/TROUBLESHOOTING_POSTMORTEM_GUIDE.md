@@ -207,6 +207,55 @@ Service: frontend-proxy:8080          Service: grafana:80 -> Container: 3000
 
 ---
 
+### Postmortem 8: cert-manager Controller Gateway API Bayrağı ve Pod Yeniden Başlatma İhtiyacı ("gateway api is not enabled")
+
+* **Belirti / Hata Logu:**
+  ```text
+  Warning  PresentError  cert-manager-challenges  
+  Error presenting challenge: couldn't Present challenge traefik/sre-platform-tls-...: 
+  gateway api is not enabled
+  ```
+  `kubectl describe challenge -A`:
+  ```text
+  Status:
+    Presented:   false
+    Processing:  true
+    Reason:      couldn't Present challenge ...: gateway api is not enabled
+    State:       pending
+  ```
+* **Kök Neden:**
+  `cert-manager` v1.16+ sürümlerinde `gatewayHTTPRoute` çözücüsünü (solver) kullanabilmek için controller container'ının Gateway API desteğiyle başlaması şarttır. Eski usul JSON patch ile argüman eklemek kırılgan kalmış ve controller pod'u rollout restart edilmediği için eski pod CRD'leri algılayamadan çalışmaya devam etmiştir. `cert-manager` Gateway API CRD'lerini ve konfigürasyonunu yalnızca başlangıçta (startup) tarar.
+* **Uygulanan Çözüm:**
+  `cert-manager` controller Deployment'ı Strategic Merge Patch ile doğrudan güncellendi ve rollout restart uygulandı:
+  ```bash
+  kubectl patch deployment cert-manager -n cert-manager --type='strategic' -p '{
+    "spec": {
+      "template": {
+        "spec": {
+          "containers": [
+            {
+              "name": "cert-manager-controller",
+              "args": [
+                "--v=2",
+                "--cluster-resource-namespace=$(POD_NAMESPACE)",
+                "--leader-election-namespace=kube-system",
+                "--acme-http01-solver-image=quay.io/jetstack/cert-manager-acmesolver:v1.16.2",
+                "--max-concurrent-challenges=60",
+                "--feature-gates=ExperimentalGatewayAPISupport=true",
+                "--enable-gateway-api"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }'
+  kubectl rollout restart deployment cert-manager -n cert-manager
+  kubectl rollout status deployment cert-manager -n cert-manager --timeout=120s
+  ```
+
+---
+
 ## 3. SRE Operasyonel Troubleshooting ve Doğrulama Rehberi (Cheat Sheet)
 
 Sorun yaşandığında kontrol edilmesi gereken adımlar sırasıyla şunlardır:
