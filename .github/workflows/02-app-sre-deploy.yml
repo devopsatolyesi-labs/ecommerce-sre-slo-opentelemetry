@@ -174,19 +174,20 @@ jobs:
       - name: "[2/4] Deploy cert-manager (Let's Encrypt Automation Engine)"
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
-          echo "Deploying cert-manager with Gateway API support enabled..."
-          # Annotate existing CRDs if present so Helm ownership validation passes
-          for crd in $(kubectl get crd -o name 2>/dev/null | grep cert-manager.io || true); do
-            kubectl label $crd app.kubernetes.io/managed-by=Helm --overwrite || true
-            kubectl annotate $crd meta.helm.sh/release-name=cert-manager meta.helm.sh/release-namespace=cert-manager --overwrite || true
-          done
+          echo "Cleaning up legacy non-Helm cert-manager objects to allow clean Helm installation..."
+          kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml --ignore-not-found=true || true
+          kubectl delete role,rolebinding -n kube-system cert-manager-cainjector:leaderelection cert-manager:leaderelection --ignore-not-found=true || true
+          kubectl delete role,rolebinding -n kube-system -l app.kubernetes.io/instance=cert-manager --ignore-not-found=true || true
+          kubectl delete role,rolebinding -n kube-system -l app.kubernetes.io/name=cert-manager --ignore-not-found=true || true
+          kubectl delete role,rolebinding -n kube-system -l app=cainjector --ignore-not-found=true || true
 
+          echo "Deploying cert-manager with Gateway API support enabled..."
           helm repo add jetstack https://charts.jetstack.io
           helm repo update jetstack
           helm upgrade --install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
             --version v1.16.2 \
-            --set crds.enabled=false \
+            --set crds.enabled=true \
             --set config.gatewayAPI.enabled=true \
             --wait --timeout=300s
 
