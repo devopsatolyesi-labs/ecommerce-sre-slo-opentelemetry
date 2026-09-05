@@ -175,6 +175,16 @@ jobs:
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
           echo "Deploying cert-manager with Gateway API support enabled..."
+          # Clean up any legacy non-Helm resources to allow clean Helm installation
+          kubectl delete namespace cert-manager --ignore-not-found=true --timeout=45s || true
+          for i in {1..30}; do
+            kubectl get namespace cert-manager 2>/dev/null || break
+            echo "Waiting for cert-manager namespace deletion... ($i/30)"
+            sleep 2
+          done
+          kubectl delete clusterrole,clusterrolebinding -l app=cert-manager --ignore-not-found=true || true
+          kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/instance=cert-manager --ignore-not-found=true || true
+
           helm repo add jetstack https://charts.jetstack.io
           helm repo update jetstack
           helm upgrade --install cert-manager jetstack/cert-manager \
@@ -194,6 +204,9 @@ jobs:
         if: inputs.action == 'deploy' || github.event_name == 'pull_request'
         run: |
           echo "Applying Gateway API Gateway, HTTPRoutes, and Let's Encrypt ClusterIssuer..."
+          kubectl create namespace astronomy-shop --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace sonarqube --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f observability/05-unified-ingress.yaml
           kubectl get gateway,httproute -A
 
