@@ -15,20 +15,9 @@ opentelemetry-collector:
   enabled: false
 
 default:
-  useDefault:
-    env: false
-  env:
-    - name: OTEL_SERVICE_NAME
-      valueFrom:
-        fieldRef:
-          apiVersion: v1
-          fieldPath: metadata.labels['app.kubernetes.io/component']
-    - name: OTEL_COLLECTOR_NAME
-      value: otel-collector
+  envOverrides:
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
       value: "http://otel-collector.opentelemetry.svc.cluster.local:4317"
-    - name: OTEL_RESOURCE_ATTRIBUTES
-      value: "service.version=3.0.0,deployment.environment=dev"
 
 components:
   frontend:
@@ -38,5 +27,5 @@ components:
 
   frontend-proxy:
     service:
-      type: LoadBalancer
+      type: ClusterIP
       port: 8080

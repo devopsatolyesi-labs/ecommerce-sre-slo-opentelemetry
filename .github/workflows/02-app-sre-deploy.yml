@@ -147,7 +147,7 @@ jobs:
           helm upgrade --install astronomy-shop open-telemetry/opentelemetry-demo \
             --namespace astronomy-shop --create-namespace \
             -f observability/values-production.yaml \
-            --timeout 10m || true
+            --timeout 10m
 
           # Ensure all microservices use ClusterIP behind the Unified Gateway
           kubectl -n astronomy-shop patch svc frontend -p '{"spec": {"type": "ClusterIP"}}' || true
@@ -160,6 +160,8 @@ jobs:
         run: |
           echo "Installing Kubernetes Gateway API v1.2.0 standard CRDs..."
           kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+          # Delete legacy unused sre-gateway if present
+          kubectl delete gateway -n traefik sre-gateway --ignore-not-found=true || true
 
           echo "Deploying Traefik v3 Kubernetes Gateway API Controller on AWS EKS..."
           helm repo add traefik https://traefik.github.io/charts --force-update

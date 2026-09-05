@@ -6,6 +6,10 @@ deployment:
   enabled: true
   replicas: 1
 
+experimental:
+  kubernetesGateway:
+    enabled: true
+
 providers:
   kubernetesCRD:
     enabled: true

@@ -72,6 +72,9 @@ log_info "Verifying Kubernetes Gateway & HTTPRoutes..."
 kubectl get gateway,httproute -A
 kubectl get certificate -A
 
+log_info "Verifying All Pods Status across cluster..."
+kubectl get pods -A
+
 # 7. Check SLO PrometheusRule
 log_info "Verifying SRE SLO Alert Rules..."
 if kubectl get prometheusrule ecommerce-sre-slo-rules -n monitoring >/dev/null 2>&1; then
