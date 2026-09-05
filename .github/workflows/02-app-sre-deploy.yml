@@ -208,6 +208,11 @@ jobs:
             kubectl delete certificaterequest,order,challenge -n traefik --all --ignore-not-found=true || true
           fi
 
+          # Remove orphaned sonarqube-route if SonarQube is not deployed
+          if [ "${{ inputs.deploy_sonarqube }}" != "true" ]; then
+            kubectl delete httproute -n sonarqube sonarqube-route --ignore-not-found=true || true
+          fi
+
           kubectl apply -f observability/05-unified-ingress.yaml
           kubectl get gateway,httproute -A
 
