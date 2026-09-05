@@ -70,7 +70,15 @@ fi
 # 6. Check Kubernetes Gateway API resources
 log_info "Verifying Kubernetes Gateway & HTTPRoutes..."
 kubectl get gateway,httproute -A
-kubectl get certificate -A
+kubectl get certificate,secret -n traefik
+
+log_info "Describing Traefik Gateway & HTTPRoutes..."
+kubectl describe gateway -n traefik traefik-gateway || true
+kubectl describe httproute -n monitoring grafana-route || true
+kubectl describe httproute -n astronomy-shop astronomy-shop-route || true
+
+log_info "Traefik Controller Logs (Tail 100)..."
+kubectl logs -n traefik deployment/traefik --tail=100 || true
 
 log_info "Verifying All Pods Status across cluster..."
 kubectl get pods -A
