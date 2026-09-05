@@ -23,6 +23,9 @@ helm upgrade --install traefik traefik/traefik \
     --set providers.kubernetesGateway.enabled=true \
     --set providers.kubernetesGateway.experimentalChannel=false \
     --set gatewayClass.enabled=true \
+    --set gateway.enabled=true \
+    --set gateway.listeners.web.routes.namespaces.from=All \
+    --set gateway.listeners.websecure.routes.namespaces.from=All \
     --set service.type=LoadBalancer \
     --wait --timeout=300s
 

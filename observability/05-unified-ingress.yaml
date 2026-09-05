@@ -1,78 +1,11 @@
 # ==============================================================================
 # Kubernetes Gateway API (v1) & Traefik v3 Modern Routing Architecture
-# Standard: gateway.networking.k8s.io/v1 (Next-Gen CNCF Replacement for Ingress)
-# - GatewayClass: traefik
-# - Gateway: sre-gateway (Namespace: traefik, Listeners: Port 80 HTTP, Port 443 HTTPS)
-# - HTTPRoute: astronomy-shop-route (astronomy.devopsatolyesi.com -> frontend-proxy:8080)
-# - HTTPRoute: grafana-route        (grafana.devopsatolyesi.com   -> grafana:80)
-# - HTTPRoute: sonarqube-route      (sonar.devopsatolyesi.com     -> sonarqube:9000)
-# - HTTPRoute: default-alb-route    (Raw AWS Load Balancer Hostname -> frontend-proxy:8080)
+# Standard: gateway.networking.k8s.io/v1
+# Parent Gateway: traefik-gateway (Namespace: traefik)
+# Listeners: web (Port 80 HTTP), websecure (Port 443 HTTPS)
 # ==============================================================================
 
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: info@devopsatolyesi.com
-    privateKeySecretRef:
-      name: letsencrypt-prod-account-key
-    solvers:
-      - http01:
-          gatewayHTTPRoute:
-            parentRefs:
-              - name: sre-gateway
-                namespace: traefik
----
-# Certificate for Astronomy Shop & SRE Platform via Let's Encrypt
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: sre-platform-tls
-  namespace: traefik
-spec:
-  secretName: sre-platform-tls
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  dnsNames:
-    - "astronomy.devopsatolyesi.com"
-    - "grafana.devopsatolyesi.com"
-    - "sonar.devopsatolyesi.com"
----
-# 1. Kubernetes Gateway API Gateway (Traefik v3 Controller)
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: sre-gateway
-  namespace: traefik
-  labels:
-    app.kubernetes.io/name: sre-gateway
-    app.kubernetes.io/part-of: gateway-api
-spec:
-  gatewayClassName: traefik
-  listeners:
-    - name: http
-      protocol: HTTP
-      port: 80
-      allowedRoutes:
-        namespaces:
-          from: All
-    - name: https
-      protocol: HTTPS
-      port: 443
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - name: sre-platform-tls
-            kind: Secret
-      allowedRoutes:
-        namespaces:
-          from: All
----
-# 2. HTTPRoute for OpenTelemetry Astronomy Shop
+# 1. HTTPRoute for OpenTelemetry Astronomy Shop
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -82,12 +15,8 @@ metadata:
     app.kubernetes.io/name: astronomy-shop
 spec:
   parentRefs:
-    - name: sre-gateway
+    - name: traefik-gateway
       namespace: traefik
-      sectionName: http
-    - name: sre-gateway
-      namespace: traefik
-      sectionName: https
   hostnames:
     - "astronomy.devopsatolyesi.com"
   rules:
@@ -99,7 +28,7 @@ spec:
         - name: frontend-proxy
           port: 8080
 ---
-# 3. HTTPRoute for Grafana SRE & SLO Dashboard
+# 2. HTTPRoute for Grafana SRE & SLO Dashboard
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -109,12 +38,8 @@ metadata:
     app.kubernetes.io/name: grafana-sre
 spec:
   parentRefs:
-    - name: sre-gateway
+    - name: traefik-gateway
       namespace: traefik
-      sectionName: http
-    - name: sre-gateway
-      namespace: traefik
-      sectionName: https
   hostnames:
     - "grafana.devopsatolyesi.com"
   rules:
@@ -126,7 +51,7 @@ spec:
         - name: grafana
           port: 80
 ---
-# 4. HTTPRoute for SonarQube Code Quality Server
+# 3. HTTPRoute for SonarQube Code Quality Server
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -136,12 +61,8 @@ metadata:
     app.kubernetes.io/name: sonarqube
 spec:
   parentRefs:
-    - name: sre-gateway
+    - name: traefik-gateway
       namespace: traefik
-      sectionName: http
-    - name: sre-gateway
-      namespace: traefik
-      sectionName: https
   hostnames:
     - "sonar.devopsatolyesi.com"
   rules:
@@ -153,7 +74,7 @@ spec:
         - name: sonarqube
           port: 9000
 ---
-# 5. Direct AWS Load Balancer Hostname Route (Fallback for raw IP/DNS without custom hostname)
+# 4. Direct AWS Load Balancer Hostname Route (Fallback)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -161,9 +82,8 @@ metadata:
   namespace: astronomy-shop
 spec:
   parentRefs:
-    - name: sre-gateway
+    - name: traefik-gateway
       namespace: traefik
-      sectionName: http
   rules:
     - matches:
         - path:
