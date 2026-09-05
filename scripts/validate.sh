@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: validate.sh
-# Description: Validates OpenTelemetry Traces, Prometheus StatefulSet, and SLO Rules
+# Description: Validates OpenTelemetry Traces, Prometheus StatefulSet, SLO Rules,
+#              Ingress-NGINX, and cert-manager Let's Encrypt certificates
 # ==============================================================================
 set -euo pipefail
 
@@ -49,16 +50,28 @@ else
     log_fail "Grafana is not ready."
 fi
 
-# 5. Check Unified Gateway
-log_info "Verifying Unified SRE Gateway in 'gateway' namespace..."
-gateway_ready=$(kubectl get deployment unified-gateway -n gateway -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
-if (( gateway_ready > 0 )); then
-    log_success "Unified SRE Gateway is active and routing."
+# 5. Check Ingress-NGINX & cert-manager
+log_info "Verifying Ingress-NGINX Controller..."
+ingress_ready=$(kubectl get deployment ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+if (( ingress_ready > 0 )); then
+    log_success "Ingress-NGINX Controller is active and ready."
 else
-    log_fail "Unified SRE Gateway is not ready."
+    log_fail "Ingress-NGINX Controller is not ready."
 fi
 
-# 6. Check SLO PrometheusRule
+log_info "Verifying cert-manager webhook..."
+cm_ready=$(kubectl get deployment cert-manager-webhook -n cert-manager -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+if (( cm_ready > 0 )); then
+    log_success "cert-manager webhook is active and ready."
+else
+    log_fail "cert-manager webhook is not ready."
+fi
+
+# 6. Check Ingress resources
+log_info "Verifying SRE Ingresses..."
+kubectl get ingress -A
+
+# 7. Check SLO PrometheusRule
 log_info "Verifying SRE SLO Alert Rules..."
 if kubectl get prometheusrule ecommerce-sre-slo-rules -n monitoring >/dev/null 2>&1; then
     log_success "SRE SLO Alert Rules (Availability & Latency) are active."
@@ -67,5 +80,5 @@ else
 fi
 
 echo "================================================================================"
-log_success "All SRE and Observability components validated successfully!"
+log_success "All SRE, Ingress, and Observability components validated successfully!"
 echo "================================================================================"

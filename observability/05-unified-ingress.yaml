@@ -1,181 +1,116 @@
 # ==============================================================================
-# Unified SRE Gateway & Ingress (Single AWS Load Balancer Architecture)
-# AWS Load Balancer with ACM SSL Certificate on Port 443 + HTTP (80) -> HTTPS (443) Redirect
-# Routes via Gateway API / Ingress rules:
-#   - astronomy.devopsatolyesi.com / default  -> frontend-proxy.astronomy-shop (8080)
-#   - grafana.devopsatolyesi.com   / /grafana -> grafana.monitoring (80)
-#   - sonar.devopsatolyesi.com     / /sonar   -> sonarqube.sonarqube (9000)
+# Unified SRE Ingress & Let's Encrypt TLS Automation
+# Let's Encrypt ClusterIssuer (HTTP-01) + Kubernetes Ingresses
+# - astronomy.devopsatolyesi.com -> frontend-proxy.astronomy-shop:8080
+# - grafana.devopsatolyesi.com   -> grafana.monitoring:80
+# - sonar.devopsatolyesi.com     -> sonarqube.sonarqube:9000
+# - Fallback: Raw ALB Hostname HTTP -> frontend-proxy.astronomy-shop:8080
 # ==============================================================================
 
-apiVersion: v1
-kind: Namespace
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
 metadata:
-  name: gateway
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gateway-proxy-config
-  namespace: gateway
-data:
-  nginx.conf: |
-    events {
-        worker_connections 1024;
-    }
-    http {
-        include /etc/nginx/mime.types;
-        sendfile on;
-        server_tokens off;
-
-        resolver 172.20.0.10 valid=10s ipv6=off;
-
-        # Virtual Host: Grafana (Host-based routing)
-        server {
-            listen 80;
-            server_name grafana.* grafana;
-
-            if ($http_x_forwarded_proto = "http") {
-                return 301 https://$host$request_uri;
-            }
-
-            location / {
-                set $grafana_backend "http://grafana.monitoring.svc.cluster.local:80";
-                proxy_pass $grafana_backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection "upgrade";
-            }
-        }
-
-        # Virtual Host: SonarQube (Host-based routing)
-        server {
-            listen 80;
-            server_name sonar.* sonar;
-
-            if ($http_x_forwarded_proto = "http") {
-                return 301 https://$host$request_uri;
-            }
-
-            location / {
-                set $sonar_backend "http://sonarqube.sonarqube.svc.cluster.local:9000";
-                proxy_pass $sonar_backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-            }
-        }
-
-        # Primary Virtual Host: Astronomy Shop Storefront (Default)
-        server {
-            listen 80 default_server;
-            server_name _;
-
-            if ($http_x_forwarded_proto = "http") {
-                return 301 https://$host$request_uri;
-            }
-
-            location /grafana/ {
-                rewrite ^/grafana/(.*) /$1 break;
-                set $grafana_backend "http://grafana.monitoring.svc.cluster.local:80";
-                proxy_pass $grafana_backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-            }
-
-            location /sonar/ {
-                rewrite ^/sonar/(.*) /$1 break;
-                set $sonar_backend "http://sonarqube.sonarqube.svc.cluster.local:9000";
-                proxy_pass $sonar_backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-            }
-
-            location / {
-                set $astronomy_backend "http://frontend-proxy.astronomy-shop.svc.cluster.local:8080";
-                proxy_pass $astronomy_backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_http_version 1.1;
-                proxy_set_header Upgrade $http_upgrade;
-                proxy_set_header Connection "upgrade";
-            }
-        }
-    }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: unified-gateway
-  namespace: gateway
-  labels:
-    app: unified-gateway
+  name: letsencrypt-prod
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: unified-gateway
-  template:
-    metadata:
-      labels:
-        app: unified-gateway
-    spec:
-      containers:
-        - name: gateway-proxy
-          image: nginx:1.27-alpine
-          ports:
-            - containerPort: 80
-              name: http
-          volumeMounts:
-            - name: config
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
-          resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "250m"
-              memory: "128Mi"
-      volumes:
-        - name: config
-          configMap:
-            name: gateway-proxy-config
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: info@devopsatolyesi.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
 ---
-apiVersion: v1
-kind: Service
+# 1. Astronomy Shop Ingress (Namespace: astronomy-shop)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: unified-gateway
-  namespace: gateway
-  labels:
-    app: unified-gateway
+  name: astronomy-shop-ingress
+  namespace: astronomy-shop
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:905418169890:certificate/17bc10fd-97dd-48d2-af8f-99938aeec27b"
-    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
-    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
-    service.beta.kubernetes.io/aws-load-balancer-ssl-negotiation-policy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
 spec:
-  type: LoadBalancer
-  selector:
-    app: unified-gateway
-  ports:
-    - name: http
-      port: 80
-      targetPort: 80
-      protocol: TCP
-    - name: https
-      port: 443
-      targetPort: 80
-      protocol: TCP
-
-
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - astronomy.devopsatolyesi.com
+      secretName: astronomy-shop-tls
+  rules:
+    - host: astronomy.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-proxy
+                port:
+                  number: 8080
+    # Direct access fallback when accessing raw LoadBalancer DNS without domain name
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-proxy
+                port:
+                  number: 8080
+---
+# 2. Grafana SRE Dashboard Ingress (Namespace: monitoring)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - grafana.devopsatolyesi.com
+      secretName: grafana-tls
+  rules:
+    - host: grafana.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+---
+# 3. SonarQube Code Quality Ingress (Namespace: sonarqube)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sonarqube-ingress
+  namespace: sonarqube
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - sonar.devopsatolyesi.com
+      secretName: sonarqube-tls
+  rules:
+    - host: sonar.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sonarqube
+                port:
+                  number: 9000

@@ -30,10 +30,10 @@ resource "cloudflare_record" "astronomy_shop" {
   name            = var.subdomain_prefix != "" ? var.subdomain_prefix : "astronomy"
   value           = local.target_host
   type            = "CNAME"
-  proxied         = true
-  ttl             = 1 # Automatic when proxied
+  proxied         = false
+  ttl             = 60
   allow_overwrite = true
-  comment         = "Managed by Terraform - OpenTelemetry Astronomy Shop Storefront"
+  comment         = "Managed by Terraform - OpenTelemetry Astronomy Shop Storefront (DNS-only for Let's Encrypt)"
 }
 
 # 3. CNAME Record for Grafana SRE & SLO Dashboard
@@ -43,10 +43,10 @@ resource "cloudflare_record" "grafana" {
   name            = var.subdomain_prefix != "" ? "grafana-${var.subdomain_prefix}" : "grafana"
   value           = local.target_host
   type            = "CNAME"
-  proxied         = true
-  ttl             = 1 # Automatic when proxied
+  proxied         = false
+  ttl             = 60
   allow_overwrite = true
-  comment         = "Managed by Terraform - Grafana SRE SLO & Observability Dashboard"
+  comment         = "Managed by Terraform - Grafana SRE SLO & Observability Dashboard (DNS-only for Let's Encrypt)"
 }
 
 # 4. Optional CNAME Record for SonarQube Code Quality Server
@@ -56,9 +56,9 @@ resource "cloudflare_record" "sonarqube" {
   name            = var.subdomain_prefix != "" ? "sonar-${var.subdomain_prefix}" : "sonar"
   value           = local.target_host
   type            = "CNAME"
-  proxied         = true
-  ttl             = 1 # Automatic when proxied
+  proxied         = false
+  ttl             = 60
   allow_overwrite = true
-  comment         = "Managed by Terraform - SonarQube Code Quality & Security Platform"
+  comment         = "Managed by Terraform - SonarQube Code Quality & Security Platform (DNS-only for Let's Encrypt)"
 }
 

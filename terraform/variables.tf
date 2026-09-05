@@ -71,7 +71,7 @@ variable "enable_ecs" {
 variable "enable_acm_ssl" {
   description = "Flag to enable AWS ACM Certificate creation and management via Terraform"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_cloudflare" {

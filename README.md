@@ -29,8 +29,10 @@ Altyapı; AWS üzerinde çift Kullanılabilirlik Alanında (Multi-AZ) konuşlana
 
 ![AWS EKS & SRE Telemetry Architecture](docs/images/aws_architecture_diagram.jpg)
 
-### Mimari Katmanlar ve Trafik Akışı:
-1. **Giriş & Yönlendirme Katmanı (Ingress & DNS):** İsteğe bağlı Cloudflare DNS & SSL proxy katmanı (`astronomy.domain.com` ve `grafana.domain.com`) üzerinden gelen istekler, AWS Multi-AZ genel alt ağlarındaki tekil Ingress Gateway (ALB) tarafından karşılanır.
+1. **Giriş & Yönlendirme Katmanı (Ingress, DNS & Let's Encrypt SSL):**
+   - **AWS Katmanı (Sıfır ACM):** AWS üzerinde ACM veya SSL terminasyonu yapılmaz; AWS Load Balancer sadece Port 80 ve Port 443 trafiğini Kubernetes Ingress-NGINX controller'a aktaran şeffaf bir köprüdür.
+   - **Cloudflare Katmanı (Sadece DNS / proxied: false):** Cloudflare sadece DNS sağlayıcı olarak kullanılır (Gri Bulut / `proxied: false`). SSL/proxy modu kapalıdır; bu sayede Cloudflare proxy çakışmaları ve SSL döngüleri engellenir.
+   - **Kubernetes & Let's Encrypt Katmanı:** Küme içinde çalışan `cert-manager`, Let's Encrypt ACME HTTP-01 protokolü ile `astronomy.devopsatolyesi.com` ve `grafana.devopsatolyesi.com` için 100% otomatik ve ücretsiz geçerli SSL/TLS sertifikalarını üretir. TLS terminasyonu doğrudan Ingress-NGINX seviyesinde gerçekleşir.
 2. **Uygulama Katmanı (EKS Private Subnets):** Ingress Gateway gelen trafiği `astronomy-shop` namespace'i altındaki `frontend-proxy` (Envoy) ve Next.js mikroservislerine yönlendirir. Ürün görselleri `image-provider` (Nginx) tarafından sunulur.
 3. **Telemetri & Gözlemlenebilirlik (LGTM Stack):** Tüm mikroservisler OpenTelemetry SDK ile enstrümante edilmiştir. Metrikler, loglar ve dağıtık izler (traces) `opentelemetry` namespace'indeki OTel Collector'a iletilir; oradan Prometheus TSDB ve Grafana Tempo'ya dağıtılır.
 4. **SRE & SLO Motoru:** Prometheus TSDB üzerinde tanımlı çok pencereli tüketim kuralları hata bütçesini sürekli denetler ve Grafana SLO Dashboard'larında görselleştirilir.
@@ -191,8 +193,9 @@ Sistem iki bağımsız ve kurumsal DevOps prensiplerine uygun iş akışından o
 * **İşlevi:**
   1. OpenTelemetry Collector, Prometheus TSDB ve Grafana Tempo StatefulSet'lerini kurar.
   2. SRE SLO çok pencereli tüketim kurallarını ConfigMap olarak Prometheus'a bağlar.
-  3. Astronomy Shop mikroservislerini `values-production.yaml` ile Helm üzerinden ayağa kaldırır (Tüm ürün görselleri ve Envoy proxy aktif edilir).
-  4. Cloudflare credentials varsa `astronomy.devopsatolyesi.com`, `grafana.devopsatolyesi.com` ve `sonar.devopsatolyesi.com` DNS CNAME ve SSL kayıtlarını otomatik açar; yoksa doğrudan tekil AWS ALB DNS hostnamesini sunar.
+  3. Astronomy Shop mikroservislerini `values-production.yaml` ile Helm üzerinden ayağa kaldırır.
+  4. Ingress-NGINX ve cert-manager'ı kurup Let's Encrypt `ClusterIssuer` (HTTP-01) ve Ingress kurallarını devreye alır.
+  5. Cloudflare DNS CNAME kayıtlarını `proxied: false` (DNS-only) olarak açar; Let's Encrypt sertifikasını otomatik doğrular ve `https://astronomy.devopsatolyesi.com` adresini yeşil kilitli olarak yayına alır.
 
 ---
 
@@ -213,15 +216,13 @@ Sistem iki bağımsız ve kurumsal DevOps prensiplerine uygun iş akışından o
 
 ### Adım 3: Servis ve Dashboard Arayüzlerine Erişim
 
-#### 1. Cloudflare / Canlı Domain Üzerinden:
+#### 1. Let's Encrypt & Canlı Domain Üzerinden (Otomatik HTTPS):
 * 🔭 **Astronomy Shop Mağazası:** `https://astronomy.devopsatolyesi.com`
 * 📊 **Grafana SRE SLO Paneli:** `https://grafana.devopsatolyesi.com`
 * 🛡️ **SonarQube Kalite Paneli:** `https://sonar.devopsatolyesi.com`
 
-#### 2. Doğrudan AWS Single Gateway Load Balancer Üzerinden (Standart Port 80):
-* 🔭 **Astronomy Shop Mağazası:** `http://<ALB-DNS-NAME>` (Port 80)
-* 📊 **Grafana SRE Paneli:** `http://<ALB-DNS-NAME>/grafana` (veya `Host: grafana.*`)
-* 🛡️ **SonarQube Kalite Paneli:** `http://<ALB-DNS-NAME>/sonar` (veya `Host: sonar.*`)
+#### 2. Doğrudan AWS Load Balancer Üzerinden (HTTP / Test):
+* 🔭 **Astronomy Shop:** `http://<ALB-DNS-NAME>` (Port 80)
 
 #### 3. Prometheus Arayüzü & Kural Kontrolü:
 ```bash

@@ -27,9 +27,9 @@ on:
           - status
           - destroy
       enable_acm_ssl:
-        description: "Provision AWS ACM SSL Certificate (Root + Wildcard DNS via Terraform)"
+        description: "Provision AWS ACM SSL Certificate (Disabled - SSL is handled via Let's Encrypt)"
         required: false
-        default: true
+        default: false
         type: boolean
 
 
@@ -73,7 +73,7 @@ jobs:
       TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
       TF_VAR_domain_name: ${{ vars.DOMAIN_NAME || 'devopsatolyesi.com' }}
       TF_VAR_enable_cloudflare: true
-      TF_VAR_enable_acm_ssl: ${{ inputs.enable_acm_ssl || true }}
+      TF_VAR_enable_acm_ssl: ${{ inputs.enable_acm_ssl || false }}
 
     defaults:
       run:
@@ -147,47 +147,6 @@ jobs:
             -auto-approve \
             -var-file="environments/${{ inputs.environment }}.tfvars" \
             -var="enable_acm_ssl=${{ inputs.enable_acm_ssl }}"
-
-      - name: Sync ACM DNS Validation Records to Cloudflare & Validate
-        if: inputs.action == 'apply' && inputs.enable_acm_ssl != false
-        env:
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-          DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'devopsatolyesi.com' }}
-        run: |
-          if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_ZONE_ID" ]; then
-            echo "Checking AWS ACM certificates for DNS validation records..."
-            for CERT_ARN in $(aws acm list-certificates --region "${AWS_REGION}" --query 'CertificateSummaryList[*].CertificateArn' --output text 2>/dev/null || echo ""); do
-              REC_NAME=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "${AWS_REGION}" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null || echo "")
-              REC_VAL=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "${AWS_REGION}" --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Value' --output text 2>/dev/null || echo "")
-              if [ -n "$REC_NAME" ] && [ "$REC_NAME" != "None" ] && [ -n "$REC_VAL" ] && [ "$REC_VAL" != "None" ]; then
-                CLEAN_NAME=$(echo "$REC_NAME" | sed 's/\.$//' | sed "s/\.${DOMAIN_NAME}$//")
-                echo "Configuring Cloudflare DNS validation CNAME: ${CLEAN_NAME}.${DOMAIN_NAME} -> ${REC_VAL}"
-                EXISTING_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${CLEAN_NAME}.${DOMAIN_NAME}&type=CNAME" \
-                  -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                  -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
-
-                if [ -n "$EXISTING_ID" ]; then
-                  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_ID}" \
-                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${CLEAN_NAME}\",\"content\":\"${REC_VAL}\",\"ttl\":60,\"proxied\":false}" >/dev/null
-                else
-                  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    --data "{\"type\":\"CNAME\",\"name\":\"${CLEAN_NAME}\",\"content\":\"${REC_VAL}\",\"ttl\":60,\"proxied\":false}" >/dev/null
-                fi
-              fi
-            done
-
-            echo "Waiting for AWS ACM Certificate validation (Status -> ISSUED)..."
-            for CERT_ARN in $(aws acm list-certificates --region "${AWS_REGION}" --query 'CertificateSummaryList[*].CertificateArn' --output text 2>/dev/null || echo ""); do
-              aws acm wait certificate-validated --certificate-arn "$CERT_ARN" --region "${AWS_REGION}" 2>/dev/null || true
-              STATUS=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "${AWS_REGION}" --query 'Certificate.Status' --output text 2>/dev/null || echo "")
-              echo "Certificate ${CERT_ARN} status: ${STATUS}"
-            done
-          fi
 
       - name: Configure Kubeconfig & Inspect Nodes
         if: inputs.action == 'apply' || inputs.action == 'status'
