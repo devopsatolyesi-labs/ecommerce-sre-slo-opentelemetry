@@ -1,10 +1,42 @@
 # ==============================================================================
-# Kubernetes Gateway API (v1) & Traefik v3 Modern Routing Architecture
-# Standard: gateway.networking.k8s.io/v1
+# Kubernetes Gateway API (v1) & Let's Encrypt TLS Automation
 # Parent Gateway: traefik-gateway (Namespace: traefik)
 # Listeners: web (Port 80 HTTP), websecure (Port 443 HTTPS)
 # ==============================================================================
 
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: info@devopsatolyesi.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: traefik-gateway
+                namespace: traefik
+---
+# Unified Certificate for Astronomy Shop, Grafana, and SonarQube via Let's Encrypt
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sre-platform-tls
+  namespace: traefik
+spec:
+  secretName: sre-platform-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "astronomy.devopsatolyesi.com"
+    - "grafana.devopsatolyesi.com"
+    - "sonar.devopsatolyesi.com"
+---
 # 1. HTTPRoute for OpenTelemetry Astronomy Shop
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

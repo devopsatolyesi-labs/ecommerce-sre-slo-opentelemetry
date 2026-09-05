@@ -1,0 +1,53 @@
+# ==============================================================================
+# Traefik v3 Helm Chart Values for AWS EKS & Kubernetes Gateway API
+# ==============================================================================
+
+deployment:
+  enabled: true
+  replicas: 1
+
+providers:
+  kubernetesCRD:
+    enabled: true
+  kubernetesGateway:
+    enabled: true
+    experimentalChannel: false
+
+gatewayClass:
+  enabled: true
+
+gateway:
+  enabled: true
+  listeners:
+    web:
+      port: 8000
+      protocol: HTTP
+      namespacePolicy:
+        from: All
+    websecure:
+      port: 8443
+      protocol: HTTPS
+      mode: Terminate
+      certificateRefs:
+        - name: sre-platform-tls
+          kind: Secret
+      namespacePolicy:
+        from: All
+
+service:
+  enabled: true
+  type: LoadBalancer
+
+ports:
+  web:
+    port: 8000
+    expose:
+      default: true
+    exposedPort: 80
+    protocol: TCP
+  websecure:
+    port: 8443
+    expose:
+      default: true
+    exposedPort: 443
+    protocol: TCP

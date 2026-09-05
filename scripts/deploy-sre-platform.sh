@@ -20,17 +20,18 @@ helm repo add traefik https://traefik.github.io/charts --force-update
 helm repo update
 helm upgrade --install traefik traefik/traefik \
     --namespace traefik --create-namespace \
-    --set providers.kubernetesGateway.enabled=true \
-    --set providers.kubernetesGateway.experimentalChannel=false \
-    --set gatewayClass.enabled=true \
-    --set gateway.enabled=true \
-    --set gateway.listeners.web.routes.namespaces.from=All \
-    --set gateway.listeners.websecure.routes.namespaces.from=All \
-    --set service.type=LoadBalancer \
+    -f "${ROOT_DIR}/observability/traefik-values.yaml" \
     --wait --timeout=300s
 
-log_info "3/6 Deploying cert-manager for automated Let's Encrypt TLS..."
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+log_info "3/6 Deploying cert-manager with Gateway API support for automated Let's Encrypt TLS..."
+helm repo add jetstack https://charts.jetstack.io --force-update
+helm repo update
+helm upgrade --install cert-manager jetstack/cert-manager \
+    --namespace cert-manager --create-namespace \
+    --version v1.16.2 \
+    --set crds.enabled=true \
+    --set config.gatewayAPI.enabled=true \
+    --wait --timeout=300s
 kubectl wait --namespace cert-manager --for=condition=ready pod --selector=app.kubernetes.io/component=webhook --timeout=180s
 
 log_info "4/6 Deploying OpenTelemetry Collector in 'opentelemetry' namespace..."
