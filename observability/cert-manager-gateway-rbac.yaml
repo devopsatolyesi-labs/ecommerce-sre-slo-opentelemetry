@@ -1,0 +1,34 @@
+# ==============================================================================
+# RBAC for cert-manager Gateway API Integration (HTTP-01 Solvers & Gateway TLS)
+# ==============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cert-manager-gateway-api
+  labels:
+    app.kubernetes.io/name: cert-manager
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "httproutes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways/finalizers", "httproutes/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch", "create", "delete", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cert-manager-gateway-api
+  labels:
+    app.kubernetes.io/name: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cert-manager-gateway-api
+subjects:
+  - name: cert-manager
+    namespace: cert-manager
+    kind: ServiceAccount
